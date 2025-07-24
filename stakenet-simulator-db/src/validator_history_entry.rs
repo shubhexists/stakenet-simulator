@@ -252,6 +252,14 @@ impl ValidatorHistoryEntry {
 
         Ok(pubkeys.into_iter().map(|row| row.vote_pubkey).collect())
     }
+
+    pub async fn fetch_all_validator_history_entries(
+        db_connection: &Pool<Postgres>,
+    ) -> Result<Vec<Self>, Error> {
+        sqlx::query_as::<_, Self>(&format!("SELECT * FROM validator_history_entries",))
+            .fetch_all(db_connection)
+            .await
+    }
 }
 
 #[derive(FromRow)]
