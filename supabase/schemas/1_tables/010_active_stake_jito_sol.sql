@@ -1,0 +1,21 @@
+--
+-- Active Stake Jito SOL Table
+--
+-- This table stores active stake data for Jito SOL
+--
+CREATE TABLE IF NOT EXISTS "public"."active_stake_jito_sol"(
+    "id" VARCHAR(50) NOT NULL PRIMARY KEY, -- {epoch}-{day}
+    "epoch" "public"."u_64" NOT NULL,
+    "day" VARCHAR(10) NOT NULL,
+    "balance" NUMERIC(20, 8) NOT NULL
+);
+
+--
+-- Row Level Security Policies
+--
+ALTER TABLE "public"."active_stake_jito_sol" ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Enable read access for all users
+CREATE POLICY "Enable read access for all users" ON "public"."active_stake_jito_sol"
+    FOR SELECT
+        USING (TRUE); 

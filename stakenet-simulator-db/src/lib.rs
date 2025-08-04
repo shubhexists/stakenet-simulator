@@ -1,9 +1,11 @@
+pub mod active_stake_jito_sol;
 mod big_decimal_u64;
 pub mod cluster_history;
 pub mod cluster_history_entry;
 pub mod epoch_priority_fees;
 pub mod epoch_rewards;
 pub mod error;
+pub mod inactive_stake_jito_sol;
 pub mod inflation_rewards;
 mod macros;
 pub mod stake_accounts;

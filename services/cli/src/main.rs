@@ -1,4 +1,7 @@
-use crate::error::CliError;
+use crate::{
+    commands::{fetch_active_stake, fetch_inactive_stake},
+    error::CliError,
+};
 use clap::{Parser, Subcommand};
 use commands::backtest::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -17,7 +20,7 @@ pub mod utils;
 #[command(author, version, about)]
 struct Cli {
     #[arg(short, long, env)]
-    pub rpc_url: String,
+    pub rpc_url: Option<String>,
 
     #[arg(
         long,
@@ -36,6 +39,8 @@ pub enum Commands {
         #[command(flatten)]
         args: BacktestArgs,
     },
+    FetchInactiveStake,
+    FetchActiveStake,
 }
 
 #[tokio::main]
@@ -64,9 +69,15 @@ async fn main() -> Result<(), CliError> {
             .unwrap(),
     );
 
-    let rpc_client = RpcClient::new(cli.rpc_url);
-
     match cli.command {
-        Commands::Backtest { args } => handle_backtest(args, &db_conn_pool, &rpc_client).await,
+        Commands::Backtest { args } => {
+            // TODO: RPC URL was not needed in Fetch Active State, hence removed it globally
+            let rpc_url = cli.rpc_url.as_ref().ok_or(CliError::InvalidRPCUrl)?;
+            let rpc_client = RpcClient::new(rpc_url.to_string());
+
+            handle_backtest(args, &db_conn_pool, &rpc_client).await
+        }
+        Commands::FetchActiveStake => fetch_active_stake(&db_conn_pool).await,
+        Commands::FetchInactiveStake => fetch_inactive_stake(&db_conn_pool).await,
     }
 }

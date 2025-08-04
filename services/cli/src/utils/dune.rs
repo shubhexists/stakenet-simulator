@@ -11,6 +11,12 @@ pub struct Row {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ExecuteResponse {
+    pub execution_id: String,
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ResultData {
     rows: Vec<Row>,
 }
@@ -20,47 +26,71 @@ struct ApiResponse {
     result: ResultData,
 }
 
-pub async fn fetch_inactive_sol_stake_jito(
-    epoch: u64,
-) -> Result<Option<Row>, Box<dyn std::error::Error>> {
-    dotenv().ok();
+#[derive(Debug, Deserialize)]
+pub struct ExecutionStatus {
+    pub execution_id: String,
+    pub query_id: u64,
+    pub is_execution_finished: bool,
+    pub state: String,
+    pub submitted_at: String,
 
-    let api_key = env::var("DUNE_API_KEY")?;
-    let query_id = 5571499;
-    let url = format!("https://api.dune.com/api/v1/query/{query_id}/results?limit=1000");
+    // "QUERY_STATE_COMPLETED" state
+    pub expires_at: Option<String>,
+    pub execution_started_at: Option<String>,
+    pub execution_ended_at: Option<String>,
+    pub result_metadata: Option<ResultMetadata>,
 
-    let client = reqwest::Client::new();
-
-    let mut headers = HeaderMap::new();
-    headers.insert("X-Dune-API-Key", HeaderValue::from_str(&api_key)?);
-
-    let response = client
-        .get(&url)
-        .headers(headers)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<ApiResponse>()
-        .await?;
-
-    let maybe_row = response
-        .result
-        .rows
-        .into_iter()
-        .find(|row| row.approx_epoch == epoch);
-
-    Ok(maybe_row)
+    // "QUERY_STATE_PENDING" state
+    pub queue_position: Option<u32>,
+    pub max_inflight_interactive_executions: Option<u32>,
 }
 
-pub async fn fetch_active_sol_stake_jito(
-    epoch: u64,
-) -> Result<Option<Row>, Box<dyn std::error::Error>> {
+#[derive(Debug, Deserialize)]
+pub struct ResultMetadata {
+    pub column_names: Vec<String>,
+    pub column_types: Vec<String>,
+    pub row_count: u32,
+    pub result_set_bytes: u32,
+    pub total_row_count: u32,
+    pub total_result_set_bytes: u32,
+    pub datapoint_count: u32,
+    pub pending_time_millis: Option<u64>,
+    pub execution_time_millis: Option<u64>,
+}
+
+pub async fn execute_dune_query(
+    query_id: u64,
+) -> Result<ExecuteResponse, Box<dyn std::error::Error>> {
     dotenv().ok();
 
     let api_key = env::var("DUNE_API_KEY")?;
-    let query_id = 5571504;
-    let url = format!("https://api.dune.com/api/v1/query/{query_id}/results?limit=1000");
+    let url = format!("https://api.dune.com/api/v1/query/{}/execute", query_id);
 
+    let client = reqwest::Client::new();
+
+    let mut headers = HeaderMap::new();
+    headers.insert("X-Dune-API-Key", HeaderValue::from_str(&api_key)?);
+    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+
+    let response = client
+        .post(&url)
+        .headers(headers)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<ExecuteResponse>()
+        .await?;
+
+    Ok(response)
+}
+
+pub async fn fetch_dune_query(
+    execution_id: String,
+) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
+    dotenv().ok();
+
+    let api_key = env::var("DUNE_API_KEY")?;
+    let url = format!("https://api.dune.com/api/v1/execution/{execution_id}/results");
     let client = reqwest::Client::new();
 
     let mut headers = HeaderMap::new();
@@ -75,11 +105,33 @@ pub async fn fetch_active_sol_stake_jito(
         .json::<ApiResponse>()
         .await?;
 
-    let maybe_row = response
-        .result
-        .rows
-        .into_iter()
-        .find(|row| row.approx_epoch == epoch);
+    Ok(response.result.rows)
+}
 
-    Ok(maybe_row)
+pub async fn fetch_dune_execution_status(
+    execution_id: &str,
+) -> Result<ExecutionStatus, Box<dyn std::error::Error>> {
+    dotenv().ok();
+
+    let api_key = env::var("DUNE_API_KEY")?;
+    let url = format!(
+        "https://api.dune.com/api/v1/execution/{}/status",
+        execution_id
+    );
+
+    let client = reqwest::Client::new();
+
+    let mut headers = HeaderMap::new();
+    headers.insert("X-Dune-API-Key", HeaderValue::from_str(&api_key)?);
+
+    let response = client
+        .get(&url)
+        .headers(headers)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<ExecutionStatus>()
+        .await?;
+
+    Ok(response)
 }

@@ -15,4 +15,13 @@ pub enum CliError {
 
     #[error("ArithmeticError")]
     ArithmeticError,
+
+    #[error("Dune API Error")]
+    DuneApiError,
+
+    #[error("Execution Id not provided")]
+    EmptyExecutionId,
+
+    #[error("RPC Url is required for this command")]
+    InvalidRPCUrl,
 }
