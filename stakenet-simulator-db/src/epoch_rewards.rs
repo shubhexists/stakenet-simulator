@@ -12,17 +12,24 @@ pub struct EpochRewards {
     #[sqlx(try_from = "BigDecimalU64")]
     pub epoch: u64,
     #[sqlx(try_from = "i16")]
+    /// Inflation commission percentage taken by the validator
     pub inflation_commission_bps: u16,
     #[sqlx(try_from = "BigDecimalU64")]
+    /// Total amount of lamports received by the validator as inflation rewards
     pub total_inflation_rewards: u64,
     #[sqlx(try_from = "i16")]
+    /// MEV commission percentage taken by the validator
     pub mev_commission_bps: u16,
     #[sqlx(try_from = "BigDecimalU64")]
+    /// Total amount of lamports received by the validator as MEV rewards
     pub total_mev_rewards: u64,
     #[sqlx(try_from = "i16")]
+    /// Priority fee commission percentage taken by the validator
     pub priority_fee_commission_bps: u16,
     #[sqlx(try_from = "BigDecimalU64")]
+    /// Total amount of lamports received by the validator as priority fee rewards
     pub total_priority_fee_rewards: u64,
+    /// Active stake of the validator
     #[sqlx(try_from = "BigDecimalU64")]
     pub active_stake: u64,
 }

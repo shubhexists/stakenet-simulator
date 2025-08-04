@@ -1,18 +1,17 @@
-use std::sync::Arc;
-
+use crate::error::CliError;
 use clap::{Parser, Subcommand};
 use commands::backtest::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
-
-use crate::error::CliError;
 
 pub mod commands;
 pub mod error;
 pub mod macros;
 pub mod steward_utils;
+pub mod utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]

@@ -108,6 +108,7 @@ fn int_to_upload_authority(int: i16) -> validator_history::MerkleRootUploadAutho
 }
 
 impl ValidatorHistoryEntry {
+    /// Number of fields in the validator_history_entries table
     const NUM_FIELDS: u8 = 22;
     // Based on the bind limit of postgres
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;

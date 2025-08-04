@@ -9,13 +9,16 @@ use validator_history::{CircBuf, ValidatorHistory as JitoValidatorHistory};
 pub struct ValidatorHistory {
     #[sqlx(try_from = "i64")]
     pub struct_version: u32,
+    /// Vote account pubkey
     pub vote_account: String,
     #[sqlx(try_from = "i64")]
     pub index: u32,
     #[sqlx(try_from = "i16")]
     pub bump: u8,
+    /// Unix timestamp when the validator last reported its IP address
     #[sqlx(try_from = "BigDecimalU64")]
     pub last_ip_timestamp: u64,
+    /// Unix timestamp when the validator last reported its version
     #[sqlx(try_from = "BigDecimalU64")]
     pub last_version_timestamp: u64,
 }
@@ -34,6 +37,7 @@ impl From<JitoValidatorHistory> for ValidatorHistory {
 }
 
 impl ValidatorHistory {
+    /// Number of fields in the validator_histories table
     const NUM_FIELDS: u8 = 6;
     // Based on the bind limit of postgres
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;
@@ -90,6 +94,7 @@ impl ValidatorHistory {
             .await
     }
 
+    /// Uses our db table data to convert to a JitoValidatorHistory struct
     pub fn convert_to_jito_validator_history(
         self,
         entries: &mut Vec<ValidatorHistoryEntry>,
