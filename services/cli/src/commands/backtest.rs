@@ -283,7 +283,7 @@ async fn calculate_stake_utilization_rate(
         return Err(CliError::LookBackPeriodTooBig);
     }
 
-    let (total_active_balance, total_inactive_balance) = futures::join!(
+    let (active_stake_data, inactive_stake_data) = futures::join!(
         ActiveStakeJitoSol::fetch_balance_for_epoch_range(
             db_connection,
             current_epoch as u64,
@@ -296,10 +296,17 @@ async fn calculate_stake_utilization_rate(
         )
     );
 
-    let total_active_balance = total_active_balance?;
-    let total_inactive_balance = total_inactive_balance?;
+    let active_stake_data = active_stake_data?;
+    let inactive_stake_data = inactive_stake_data?;
 
-    calculate_stake_utilization(&total_active_balance, &total_inactive_balance)
+    if active_stake_data.1 != inactive_stake_data.1 {
+        return Err(CliError::RecordCountMismatch {
+            active_count: active_stake_data.1,
+            inactive_count: inactive_stake_data.1,
+        });
+    }
+
+    calculate_stake_utilization(&active_stake_data.0, &inactive_stake_data.0)
 }
 
 #[cfg(test)]

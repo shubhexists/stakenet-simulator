@@ -71,22 +71,25 @@ impl ActiveStakeJitoSol {
         db_connection: &Pool<Postgres>,
         current_epoch: u64,
         lookback_period: u64,
-    ) -> Result<BigDecimal, Error> {
+    ) -> Result<(BigDecimal, i64), Error> {
         let start_epoch = current_epoch - lookback_period;
         let end_epoch = current_epoch;
 
         let query = "
-            SELECT SUM(balance) as total_balance 
+            SELECT SUM(balance) as total_balance, COUNT(*) as record_count
             FROM active_stake_jito_sol 
             WHERE epoch >= $1 AND epoch <= $2
         ";
 
-        let result: Option<BigDecimal> = sqlx::query_scalar(query)
+        let result: Option<(BigDecimal, i64)> = sqlx::query_as(query)
             .bind(BigDecimal::from(start_epoch))
             .bind(BigDecimal::from(end_epoch))
             .fetch_optional(db_connection)
             .await?;
 
-        result.ok_or(Error::RowNotFound)
+        match result {
+            Some((balance, count)) => Ok((balance, count)),
+            None => Err(Error::RowNotFound),
+        }
     }
 }
