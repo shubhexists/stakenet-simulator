@@ -256,6 +256,24 @@ fn calculate_apy(r: f64, t: f64, n: f64) -> f64 {
     (1.0 + r).powf(n / t) - 1.0
 }
 
+fn calculate_stake_utilization(
+    total_active_balance: &BigDecimal,
+    total_inactive_balance: &BigDecimal,
+) -> Result<f64, CliError> {
+    let total_stake = total_active_balance.clone() + total_inactive_balance.clone();
+
+    if total_stake == BigDecimal::from(0) {
+        return Ok(0.0);
+    }
+
+    let utilization_rate = total_active_balance
+        .to_f64()
+        .ok_or(CliError::ArithmeticError)?
+        / total_stake.to_f64().ok_or(CliError::ArithmeticError)?;
+
+    Ok(utilization_rate)
+}
+
 async fn calculate_stake_utilization_rate(
     db_connection: &Pool<Postgres>,
     lookback_period: u16,
@@ -281,39 +299,13 @@ async fn calculate_stake_utilization_rate(
     let total_active_balance = total_active_balance?;
     let total_inactive_balance = total_inactive_balance?;
 
-    let total_stake = total_active_balance.clone() + total_inactive_balance.clone();
-
-    if total_stake == BigDecimal::from(0) {
-        return Ok(0.0);
-    }
-
-    let utilization_rate = total_active_balance
-        .to_f64()
-        .ok_or(CliError::ArithmeticError)?
-        / total_stake.to_f64().ok_or(CliError::ArithmeticError)?;
-
-    Ok(utilization_rate)
+    calculate_stake_utilization(&total_active_balance, &total_inactive_balance)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::postgres::PgPoolOptions;
-    use std::sync::Arc;
-
-    async fn create_test_db_connection() -> Arc<sqlx::PgPool> {
-        let database_url = std::env::var("DB_CONNECTION_URL").unwrap_or_else(|_| {
-            "postgresql://postgres:postgres@127.0.0.1:54322/postgres".to_string()
-        });
-
-        Arc::new(
-            PgPoolOptions::new()
-                .max_connections(5)
-                .connect(&database_url)
-                .await
-                .expect("Failed to connect to test database"),
-        )
-    }
+    use sqlx::types::BigDecimal;
 
     #[test]
     fn test_apy_calculation() {
@@ -324,59 +316,33 @@ mod tests {
         assert!((apy - 36.113).abs() < 0.001, "APY calculation is incorrect");
     }
 
-    #[tokio::test]
-    async fn test_calculate_stake_utilization_rate_less() {
-        let db_connection = create_test_db_connection().await;
-        let lookback_period = 10;
-        let current_epoch = 821;
+    #[test]
+    fn test_calculate_stake_utilization_rate_from_balances() {
+        // INACTIVE BALANCE is 0
+        let active_balance = BigDecimal::from(100);
+        let inactive_balance = BigDecimal::from(0);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1.0);
 
-        let result =
-            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
+        // ACTIVE BALANCE is 0
+        let active_balance = BigDecimal::from(0);
+        let inactive_balance = BigDecimal::from(100);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.0);
 
-        match result {
-            Ok(utilization_rate) => {
-                assert!(
-                    utilization_rate < 1.0,
-                    "Utilization rate can't be greater than one"
-                );
-            }
-            Err(e) => {
-                panic!("Test failed with error: {:?}", e);
-            }
-        }
-    }
+        // TOTAL BALANCE is 0
+        let active_balance = BigDecimal::from(0);
+        let inactive_balance = BigDecimal::from(0);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.0);
 
-    #[tokio::test]
-    async fn test_calculate_stake_utilization_rate_lookback_too_big() {
-        let db_connection = create_test_db_connection().await;
-        let lookback_period = 1000;
-        let current_epoch = 821;
-
-        let result =
-            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
-
-        assert!(matches!(result, Err(CliError::LookBackPeriodTooBig)));
-    }
-
-    #[tokio::test]
-    async fn test_calculate_stake_utilization_rate() {
-        let db_connection = create_test_db_connection().await;
-        let lookback_period = 821;
-        let current_epoch = 821;
-
-        let result =
-            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
-
-        match result {
-            Ok(utilization_rate) => {
-                assert!(
-                    utilization_rate < 1.0,
-                    "Utilization rate can't be greater than one"
-                );
-            }
-            Err(e) => {
-                panic!("Test failed with error: {:?}", e);
-            }
-        }
+        let active_balance = BigDecimal::from(800);
+        let inactive_balance = BigDecimal::from(200);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.8);
     }
 }
