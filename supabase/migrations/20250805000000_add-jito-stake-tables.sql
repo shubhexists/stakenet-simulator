@@ -2,7 +2,7 @@ create table "public"."inactive_stake_jito_sol" (
     "id" character varying(50) not null,
     "epoch" u_64 not null,
     "day" character varying(10) not null,
-    "balance" numeric(20,8) not null
+    "balance" numeric(20,9) not null
 );
 
 
@@ -65,7 +65,7 @@ create table "public"."active_stake_jito_sol" (
     "id" character varying(50) not null,
     "epoch" u_64 not null,
     "day" character varying(10) not null,
-    "balance" numeric(20,8) not null
+    "balance" numeric(20,9) not null
 );
 
 

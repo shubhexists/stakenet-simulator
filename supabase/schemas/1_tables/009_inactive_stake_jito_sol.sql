@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS "public"."inactive_stake_jito_sol"(
     "id" VARCHAR(50) NOT NULL PRIMARY KEY, -- {epoch}-{day}
     "epoch" "public"."u_64" NOT NULL,
     "day" VARCHAR(10) NOT NULL,
-    "balance" NUMERIC(20, 8) NOT NULL
+    "balance" NUMERIC(20, 9) NOT NULL
 );
 
 --
