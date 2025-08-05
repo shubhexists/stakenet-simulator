@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use crate::{error::CliError, modify_config_parameter_from_args, steward_utils::fetch_config};
 use clap::Parser;
 use futures::stream::StreamExt;
 use jito_steward::{Config, constants::TVC_ACTIVATION_EPOCH, score::validator_score};
@@ -14,10 +13,9 @@ use stakenet_simulator_db::{
     inactive_stake_jito_sol::InactiveStakeJitoSol, validator_history::ValidatorHistory,
     validator_history_entry::ValidatorHistoryEntry,
 };
+use std::collections::HashMap;
 use tracing::{error, info};
 use validator_history::ClusterHistory as JitoClusterHistory;
-
-use crate::{error::CliError, modify_config_parameter_from_args, steward_utils::fetch_config};
 
 const DAYS_PER_YEAR: f64 = 365.0;
 
@@ -299,10 +297,23 @@ async fn calculate_stake_utilization_rate(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
 
-    use super::*;
+    async fn create_test_db_connection() -> Arc<sqlx::PgPool> {
+        let database_url = std::env::var("DB_CONNECTION_URL").unwrap_or_else(|_| {
+            "postgresql://postgres:postgres@127.0.0.1:54322/postgres".to_string()
+        });
+
+        Arc::new(
+            PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+                .expect("Failed to connect to test database"),
+        )
+    }
 
     #[test]
     fn test_apy_calculation() {
@@ -313,18 +324,9 @@ mod tests {
         assert!((apy - 36.113).abs() < 0.001, "APY calculation is incorrect");
     }
 
-    // TODO: test the case with lookup > current_epoch
     #[tokio::test]
-    async fn test_calculate_stake_utilization_rate_basic() {
-        // Take url from env if provided?
-        let db_connection = Arc::new(
-            PgPoolOptions::new()
-                .max_connections(5)
-                .connect("postgresql://postgres:postgres@127.0.0.1:54322/postgres")
-                .await
-                .unwrap(),
-        );
-
+    async fn test_calculate_stake_utilization_rate_less() {
+        let db_connection = create_test_db_connection().await;
         let lookback_period = 10;
         let current_epoch = 821;
 
@@ -333,10 +335,47 @@ mod tests {
 
         match result {
             Ok(utilization_rate) => {
-                println!("Utilization rate: {}", utilization_rate);
+                assert!(
+                    utilization_rate < 1.0,
+                    "Utilization rate can't be greater than one"
+                );
             }
             Err(e) => {
-                println!("Error: {:?}", e);
+                panic!("Test failed with error: {:?}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_calculate_stake_utilization_rate_lookback_too_big() {
+        let db_connection = create_test_db_connection().await;
+        let lookback_period = 1000;
+        let current_epoch = 821;
+
+        let result =
+            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
+
+        assert!(matches!(result, Err(CliError::LookBackPeriodTooBig)));
+    }
+
+    #[tokio::test]
+    async fn test_calculate_stake_utilization_rate() {
+        let db_connection = create_test_db_connection().await;
+        let lookback_period = 821;
+        let current_epoch = 821;
+
+        let result =
+            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
+
+        match result {
+            Ok(utilization_rate) => {
+                assert!(
+                    utilization_rate < 1.0,
+                    "Utilization rate can't be greater than one"
+                );
+            }
+            Err(e) => {
+                panic!("Test failed with error: {:?}", e);
             }
         }
     }
