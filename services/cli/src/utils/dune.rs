@@ -7,6 +7,8 @@ use std::env;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
+// TODO: Name these enums better
+
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Row {
     pub day: String,
@@ -151,6 +153,9 @@ pub async fn wait_for_query_execution(execution_id: &str) -> Result<(), CliError
             .await
             .map_err(|_| CliError::DuneApiError)?;
         let state_str = status.state.as_str();
+
+        // TODO: Have an enum for Dune states
+
         if !seen_states.contains(state_str) {
             match state_str {
                 "QUERY_STATE_COMPLETED" => {

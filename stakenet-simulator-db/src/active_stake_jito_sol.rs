@@ -51,6 +51,7 @@ impl ActiveStakeJitoSol {
         }
 
         if num_records > 0 {
+            query_builder.push(" ON CONFLICT (id) DO NOTHING");
             let query = query_builder.build();
             query.execute(db_connection).await?;
         }

@@ -4,7 +4,6 @@ use crate::utils::{execute_dune_query, fetch_dune_query};
 use sqlx::types::BigDecimal;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::active_stake_jito_sol::ActiveStakeJitoSol;
-use std::collections::HashSet;
 use std::str::FromStr;
 use tracing::info;
 
@@ -19,12 +18,8 @@ pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         .await
         .map_err(|_| CliError::DuneApiError)?;
 
-    let existing_records = ActiveStakeJitoSol::fetch_all_records(db).await?;
-    let existing_epochs: HashSet<u64> = existing_records.into_iter().map(|r| r.epoch).collect();
-
-    let new_records: Vec<ActiveStakeJitoSol> = results
+    let records: Vec<ActiveStakeJitoSol> = results
         .into_iter()
-        .filter(|row| !existing_epochs.contains(&row.approx_epoch))
         .map(|row| {
             let day_date = row.day.chars().take(10).collect::<String>();
             ActiveStakeJitoSol {
@@ -36,12 +31,13 @@ pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         })
         .collect();
 
-    if new_records.is_empty() {
-        info!("No new epochs to insert.");
+    if records.is_empty() {
+        info!("No records to process.");
     } else {
-        info!("Inserting {} new epoch records...", new_records.len());
-        ActiveStakeJitoSol::bulk_insert(db, new_records).await?;
-        info!("Insertion complete.");
+        info!("Processing records...");
+        ActiveStakeJitoSol::bulk_insert(db, records).await?;
+        info!("Processing complete. New records inserted, duplicates ignored.");
     }
+
     Ok(())
 }
