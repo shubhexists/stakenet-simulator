@@ -66,4 +66,27 @@ impl InactiveStakeJitoSol {
         }
         Ok(())
     }
+
+    pub async fn fetch_balance_for_epoch_range(
+        db_connection: &Pool<Postgres>,
+        current_epoch: u64,
+        lookback_period: u64,
+    ) -> Result<BigDecimal, Error> {
+        let start_epoch = current_epoch - lookback_period;
+        let end_epoch = current_epoch;
+
+        let query = "
+            SELECT SUM(balance) as total_balance 
+            FROM inactive_stake_jito_sol 
+            WHERE epoch >= $1 AND epoch <= $2
+        ";
+
+        let result: Option<BigDecimal> = sqlx::query_scalar(query)
+            .bind(BigDecimal::from(start_epoch))
+            .bind(BigDecimal::from(end_epoch))
+            .fetch_optional(db_connection)
+            .await?;
+
+        result.ok_or(Error::RowNotFound)
+    }
 }

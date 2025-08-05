@@ -6,10 +6,12 @@ use jito_steward::{Config, constants::TVC_ACTIVATION_EPOCH, score::validator_sco
 use num_traits::cast::ToPrimitive;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
+use sqlx::types::BigDecimal;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::{
-    cluster_history::ClusterHistory, cluster_history_entry::ClusterHistoryEntry,
-    epoch_rewards::EpochRewards, validator_history::ValidatorHistory,
+    active_stake_jito_sol::ActiveStakeJitoSol, cluster_history::ClusterHistory,
+    cluster_history_entry::ClusterHistoryEntry, epoch_rewards::EpochRewards,
+    inactive_stake_jito_sol::InactiveStakeJitoSol, validator_history::ValidatorHistory,
     validator_history_entry::ValidatorHistoryEntry,
 };
 use tracing::{error, info};
@@ -207,7 +209,13 @@ pub async fn handle_backtest(
         look_back_period.to_f64().ok_or(CliError::ArithmeticError)? * 2.0;
     assert!(look_back_period_in_days < DAYS_PER_YEAR);
     let apy = calculate_apy(rate_of_return, look_back_period_in_days, DAYS_PER_YEAR);
-    info!("apy: {}", apy);
+
+    let stake_utilization_ratio =
+        calculate_stake_utilization_rate(db_connection, look_back_period, current_epoch).await?;
+
+    // info!("apy: {}", apy);
+    let final_apy = apy * stake_utilization_ratio;
+    info!("APY : {}", final_apy);
 
     Ok(())
 }
@@ -250,16 +258,86 @@ fn calculate_apy(r: f64, t: f64, n: f64) -> f64 {
     (1.0 + r).powf(n / t) - 1.0
 }
 
+async fn calculate_stake_utilization_rate(
+    db_connection: &Pool<Postgres>,
+    lookback_period: u16,
+    current_epoch: u16,
+) -> Result<f64, CliError> {
+    if lookback_period > current_epoch {
+        return Err(CliError::LookBackPeriodTooBig);
+    }
+
+    let (total_active_balance, total_inactive_balance) = futures::join!(
+        ActiveStakeJitoSol::fetch_balance_for_epoch_range(
+            db_connection,
+            current_epoch as u64,
+            lookback_period as u64,
+        ),
+        InactiveStakeJitoSol::fetch_balance_for_epoch_range(
+            db_connection,
+            current_epoch as u64,
+            lookback_period as u64,
+        )
+    );
+
+    let total_active_balance = total_active_balance?;
+    let total_inactive_balance = total_inactive_balance?;
+
+    let total_stake = total_active_balance.clone() + total_inactive_balance.clone();
+
+    if total_stake == BigDecimal::from(0) {
+        return Ok(0.0);
+    }
+
+    let utilization_rate = total_active_balance
+        .to_f64()
+        .ok_or(CliError::ArithmeticError)?
+        / total_stake.to_f64().ok_or(CliError::ArithmeticError)?;
+
+    Ok(utilization_rate)
+}
+
 #[cfg(test)]
 mod tests {
+    use sqlx::postgres::PgPoolOptions;
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
     fn test_apy_calculation() {
         let r = 0.02; // 2% return
-        let t = 2.0;  // 2-day period
+        let t = 2.0; // 2-day period
         let n = 365.0; // Days in a year
         let apy = calculate_apy(r, t, n);
         assert!((apy - 36.113).abs() < 0.001, "APY calculation is incorrect");
+    }
+
+    // TODO: test the case with lookup > current_epoch
+    #[tokio::test]
+    async fn test_calculate_stake_utilization_rate_basic() {
+        // Take url from env if provided?
+        let db_connection = Arc::new(
+            PgPoolOptions::new()
+                .max_connections(5)
+                .connect("postgresql://postgres:postgres@127.0.0.1:54322/postgres")
+                .await
+                .unwrap(),
+        );
+
+        let lookback_period = 10;
+        let current_epoch = 821;
+
+        let result =
+            calculate_stake_utilization_rate(&db_connection, lookback_period, current_epoch).await;
+
+        match result {
+            Ok(utilization_rate) => {
+                println!("Utilization rate: {}", utilization_rate);
+            }
+            Err(e) => {
+                println!("Error: {:?}", e);
+            }
+        }
     }
 }

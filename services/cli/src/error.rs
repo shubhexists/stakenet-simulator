@@ -24,4 +24,7 @@ pub enum CliError {
 
     #[error("RPC Url is required for this command")]
     InvalidRPCUrl,
+
+    #[error("Lookback period can't be larger than current epoch")]
+    LookBackPeriodTooBig,
 }
