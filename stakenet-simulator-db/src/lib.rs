@@ -1,3 +1,5 @@
+use sqlx::types::BigDecimal;
+
 pub mod active_stake_jito_sol;
 mod big_decimal_u64;
 pub mod cluster_history;
@@ -11,3 +13,9 @@ mod macros;
 pub mod stake_accounts;
 pub mod validator_history;
 pub mod validator_history_entry;
+
+#[derive(Debug)]
+pub struct EpochBalanceResponse {
+    pub balance: BigDecimal,
+    pub count: i64,
+}

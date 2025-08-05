@@ -1,4 +1,4 @@
-use crate::big_decimal_u64::BigDecimalU64;
+use crate::{EpochBalanceResponse, big_decimal_u64::BigDecimalU64};
 use sqlx::{Error, FromRow, Pool, Postgres, QueryBuilder, types::BigDecimal};
 
 #[derive(FromRow)]
@@ -71,7 +71,7 @@ impl ActiveStakeJitoSol {
         db_connection: &Pool<Postgres>,
         current_epoch: u64,
         lookback_period: u64,
-    ) -> Result<(BigDecimal, i64), Error> {
+    ) -> Result<EpochBalanceResponse, Error> {
         let start_epoch = current_epoch - lookback_period;
         let end_epoch = current_epoch;
 
@@ -88,7 +88,7 @@ impl ActiveStakeJitoSol {
             .await?;
 
         match result {
-            Some((balance, count)) => Ok((balance, count)),
+            Some((balance, count)) => Ok(EpochBalanceResponse { balance, count }),
             None => Err(Error::RowNotFound),
         }
     }

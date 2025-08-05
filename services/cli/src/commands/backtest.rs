@@ -299,14 +299,14 @@ async fn calculate_stake_utilization_rate(
     let active_stake_data = active_stake_data?;
     let inactive_stake_data = inactive_stake_data?;
 
-    if active_stake_data.1 != inactive_stake_data.1 {
+    if active_stake_data.count != inactive_stake_data.count {
         return Err(CliError::RecordCountMismatch {
-            active_count: active_stake_data.1,
-            inactive_count: inactive_stake_data.1,
+            active_count: active_stake_data.count,
+            inactive_count: inactive_stake_data.count,
         });
     }
 
-    calculate_stake_utilization(&active_stake_data.0, &inactive_stake_data.0)
+    calculate_stake_utilization(&active_stake_data.balance, &inactive_stake_data.balance)
 }
 
 #[cfg(test)]
