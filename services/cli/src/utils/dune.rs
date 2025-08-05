@@ -62,6 +62,9 @@ pub struct ResultMetadata {
     pub execution_time_millis: Option<u64>,
 }
 
+pub const INACTIVE_STAKE_DUNE_QUERY: u64 = 5571499;
+pub const ACTIVE_STAKE_DUNE_QUERY: u64 = 5571504;
+
 pub async fn execute_dune_query(
     query_id: u64,
 ) -> Result<ExecuteResponse, Box<dyn std::error::Error>> {

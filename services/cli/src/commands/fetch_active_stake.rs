@@ -1,5 +1,5 @@
 use crate::error::CliError;
-use crate::utils::wait_for_query_execution;
+use crate::utils::{ACTIVE_STAKE_DUNE_QUERY, wait_for_query_execution};
 use crate::utils::{execute_dune_query, fetch_dune_query};
 use sqlx::types::BigDecimal;
 use sqlx::{Pool, Postgres};
@@ -8,7 +8,7 @@ use std::str::FromStr;
 use tracing::info;
 
 pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
-    let execute_client = execute_dune_query(5571504)
+    let execute_client = execute_dune_query(ACTIVE_STAKE_DUNE_QUERY)
         .await
         .map_err(|_| CliError::DuneApiError)?;
 

@@ -1,4 +1,4 @@
-use crate::utils::wait_for_query_execution;
+use crate::utils::{INACTIVE_STAKE_DUNE_QUERY, wait_for_query_execution};
 use crate::{
     error::CliError,
     utils::{execute_dune_query, fetch_dune_query},
@@ -9,7 +9,7 @@ use std::str::FromStr;
 use tracing::info;
 
 pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
-    let execute_client = execute_dune_query(5571499)
+    let execute_client = execute_dune_query(INACTIVE_STAKE_DUNE_QUERY)
         .await
         .map_err(|_| CliError::DuneApiError)?;
 
