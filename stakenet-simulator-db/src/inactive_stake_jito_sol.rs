@@ -16,6 +16,15 @@ impl InactiveStakeJitoSol {
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;
     const INSERT_QUERY: &str = "INSERT INTO inactive_stake_jito_sol (id,epoch,day,balance) VALUES ";
 
+    pub fn new(epoch: u64, day: String, balance: BigDecimal) -> Self {
+        Self {
+            id: format!("{}-{}", epoch, day),
+            epoch,
+            day,
+            balance,
+        }
+    }
+
     pub async fn bulk_insert(
         db_connection: &Pool<Postgres>,
         records: Vec<Self>,
@@ -56,21 +65,5 @@ impl InactiveStakeJitoSol {
             query.execute(db_connection).await?;
         }
         Ok(())
-    }
-
-    pub async fn fetch_by_epoch(
-        db_connection: &Pool<Postgres>,
-        epoch: u64,
-    ) -> Result<Option<Self>, Error> {
-        sqlx::query_as::<_, Self>("SELECT * FROM inactive_stake_jito_sol WHERE epoch = $1")
-            .bind(BigDecimal::from(epoch))
-            .fetch_optional(db_connection)
-            .await
-    }
-
-    pub async fn fetch_all_records(db_connection: &Pool<Postgres>) -> Result<Vec<Self>, Error> {
-        sqlx::query_as::<_, Self>("SELECT * FROM inactive_stake_jito_sol")
-            .fetch_all(db_connection)
-            .await
     }
 }

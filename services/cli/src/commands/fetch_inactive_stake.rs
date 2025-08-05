@@ -27,12 +27,11 @@ pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         .into_iter()
         .map(|row| {
             let day_date = row.day.chars().take(10).collect::<String>();
-            InactiveStakeJitoSol {
-                id: format!("{}-{}", row.approx_epoch, day_date),
-                epoch: row.approx_epoch,
-                day: day_date,
-                balance: BigDecimal::from_str(&row.total_sol_balance.to_string()).unwrap(),
-            }
+            InactiveStakeJitoSol::new(
+                row.approx_epoch,
+                day_date,
+                BigDecimal::from_str(&row.total_sol_balance.to_string()).unwrap(),
+            )
         })
         .collect();
 

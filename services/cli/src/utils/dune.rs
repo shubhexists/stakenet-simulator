@@ -7,8 +7,6 @@ use std::env;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
-// TODO: Name these enums better
-
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Row {
     pub day: String,

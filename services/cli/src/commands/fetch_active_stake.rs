@@ -22,12 +22,11 @@ pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         .into_iter()
         .map(|row| {
             let day_date = row.day.chars().take(10).collect::<String>();
-            ActiveStakeJitoSol {
-                id: format!("{}-{}", row.approx_epoch, day_date),
-                epoch: row.approx_epoch,
-                day: day_date,
-                balance: BigDecimal::from_str(&row.total_sol_balance.to_string()).unwrap(),
-            }
+            ActiveStakeJitoSol::new(
+                row.approx_epoch,
+                day_date,
+                BigDecimal::from_str(&row.total_sol_balance.to_string()).unwrap(),
+            )
         })
         .collect();
 
