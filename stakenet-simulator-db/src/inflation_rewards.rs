@@ -11,10 +11,13 @@ pub struct InflationReward {
     pub epoch: u64,
     #[sqlx(try_from = "BigDecimalU64")]
     pub effective_slot: u64,
+    /// Amount of lamports received by the validator as inflation rewards
     #[sqlx(try_from = "BigDecimalU64")]
     pub amount: u64,
+    /// Post-inflation balance of the stake account
     #[sqlx(try_from = "BigDecimalU64")]
     pub post_balance: u64,
+    /// Commission percentage taken by the validator
     pub commission: Option<i16>,
 }
 

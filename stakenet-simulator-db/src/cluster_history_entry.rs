@@ -5,10 +5,13 @@ use validator_history::ClusterHistoryEntry as JitoClusterHistoryEntry;
 
 #[derive(FromRow)]
 pub struct ClusterHistoryEntry {
+    /// Epoch number
     #[sqlx(try_from = "i32")]
     pub epoch: u16,
+    /// Total number of blocks in the epoch
     #[sqlx(try_from = "i64")]
     pub total_blocks: u32,
+    /// Unix timestamp when the epoch started
     #[sqlx(try_from = "BigDecimalU64")]
     pub epoch_start_timestamp: u64,
 }

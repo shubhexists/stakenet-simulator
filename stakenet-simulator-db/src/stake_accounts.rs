@@ -11,9 +11,13 @@ pub struct StakeAccount {
     lockup_unix_timestamp: Option<i64>,
     lockup_epoch: Option<u64>,
     lockup_custodian: Option<String>,
+    /// Validator pubkey that the stake account is delegated to
     delegation_voter_pubkey: Option<String>,
+    /// Amount of stake delegated to the validator
     delegation_stake: Option<u64>,
+    /// Epoch when the stake account was activated
     delegation_activation_epoch: Option<u64>,
+    /// Epoch when the stake account was deactivated
     delegation_deactivation_epoch: Option<u64>,
     delegation_warmup_cooldown_rate: Option<f64>,
     credits_observed: Option<u64>,
