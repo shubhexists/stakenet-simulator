@@ -1,7 +1,11 @@
+use crate::error::CliError;
 use dotenvy::dotenv;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::env;
+use tokio::time::{Duration, sleep};
+use tracing::{info, warn};
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Row {
@@ -134,4 +138,44 @@ pub async fn fetch_dune_execution_status(
         .await?;
 
     Ok(response)
+}
+
+pub async fn wait_for_query_execution(execution_id: &str) -> Result<(), CliError> {
+    if execution_id.is_empty() {
+        return Err(CliError::EmptyExecutionId);
+    }
+    info!("Submitted Dune query. Execution ID: {}", execution_id);
+    let mut seen_states = HashSet::new();
+    loop {
+        let status = fetch_dune_execution_status(execution_id)
+            .await
+            .map_err(|_| CliError::DuneApiError)?;
+        let state_str = status.state.as_str();
+        if !seen_states.contains(state_str) {
+            match state_str {
+                "QUERY_STATE_COMPLETED" => {
+                    info!("Query execution completed!");
+                    break;
+                }
+                "QUERY_STATE_PENDING" => {
+                    info!(
+                        "Query pending... Queue position: {:?}",
+                        status.queue_position
+                    );
+                }
+                "QUERY_STATE_EXECUTING" => {
+                    info!("Query executing... hang tight.");
+                }
+                other => {
+                    warn!("Unexpected query state: {}", other);
+                }
+            }
+            seen_states.insert(state_str.to_string());
+        }
+        if state_str == "QUERY_STATE_COMPLETED" {
+            break;
+        }
+        sleep(Duration::from_secs(10)).await;
+    }
+    Ok(())
 }

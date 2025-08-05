@@ -1,64 +1,19 @@
 use crate::error::CliError;
-use crate::utils::{execute_dune_query, fetch_dune_execution_status, fetch_dune_query};
+use crate::utils::wait_for_query_execution;
+use crate::utils::{execute_dune_query, fetch_dune_query};
 use sqlx::types::BigDecimal;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::active_stake_jito_sol::ActiveStakeJitoSol;
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::time::Duration;
-use tokio::time::sleep;
+use tracing::info;
 
 pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
     let execute_client = execute_dune_query(5571504)
         .await
         .map_err(|_| CliError::DuneApiError)?;
 
-    if execute_client.execution_id.is_empty() {
-        return Err(CliError::EmptyExecutionId);
-    }
-
-    println!(
-        "Submitted Dune query. Execution ID: {}",
-        execute_client.execution_id
-    );
-
-    let mut seen_states = HashSet::new();
-    loop {
-        let status = fetch_dune_execution_status(&execute_client.execution_id)
-            .await
-            .map_err(|_| CliError::DuneApiError)?;
-
-        let state_str = status.state.as_str();
-
-        // TODO: USE AN ENUM
-        if !seen_states.contains(state_str) {
-            match state_str {
-                "QUERY_STATE_COMPLETED" => {
-                    println!("Query execution completed!");
-                    break;
-                }
-                "QUERY_STATE_PENDING" => {
-                    println!(
-                        "Query pending... Queue position: {:?}",
-                        status.queue_position
-                    );
-                }
-                "QUERY_STATE_EXECUTING" => {
-                    println!("Query executing... hang tight.");
-                }
-                other => {
-                    println!("Unexpected query state: {}", other);
-                }
-            }
-            seen_states.insert(state_str.to_string());
-        }
-
-        if state_str == "QUERY_STATE_COMPLETED" {
-            break;
-        }
-
-        sleep(Duration::from_secs(10)).await;
-    }
+    wait_for_query_execution(&execute_client.execution_id).await?;
 
     let results = fetch_dune_query(execute_client.execution_id)
         .await
@@ -82,13 +37,11 @@ pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         .collect();
 
     if new_records.is_empty() {
-        println!("No new epochs to insert.");
+        info!("No new epochs to insert.");
     } else {
-        println!("Inserting {} new epoch records...", new_records.len());
-        ActiveStakeJitoSol::bulk_insert(db, new_records)
-            .await
-            .map_err(|err| CliError::SqlxError(err))?;
-        println!("Insertion complete.");
+        info!("Inserting {} new epoch records...", new_records.len());
+        ActiveStakeJitoSol::bulk_insert(db, new_records).await?;
+        info!("Insertion complete.");
     }
     Ok(())
 }
