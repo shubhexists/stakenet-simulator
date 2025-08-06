@@ -1,21 +1,21 @@
-use std::collections::HashMap;
-
+use crate::{error::CliError, modify_config_parameter_from_args, steward_utils::fetch_config};
 use clap::Parser;
 use futures::stream::StreamExt;
 use jito_steward::{Config, constants::TVC_ACTIVATION_EPOCH, score::validator_score};
 use num_traits::cast::ToPrimitive;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
+use sqlx::types::BigDecimal;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::{
-    cluster_history::ClusterHistory, cluster_history_entry::ClusterHistoryEntry,
-    epoch_rewards::EpochRewards, validator_history::ValidatorHistory,
+    active_stake_jito_sol::ActiveStakeJitoSol, cluster_history::ClusterHistory,
+    cluster_history_entry::ClusterHistoryEntry, epoch_rewards::EpochRewards,
+    inactive_stake_jito_sol::InactiveStakeJitoSol, validator_history::ValidatorHistory,
     validator_history_entry::ValidatorHistoryEntry,
 };
+use std::collections::HashMap;
 use tracing::{error, info};
 use validator_history::ClusterHistory as JitoClusterHistory;
-
-use crate::{error::CliError, modify_config_parameter_from_args, steward_utils::fetch_config};
 
 const DAYS_PER_YEAR: f64 = 365.0;
 
@@ -207,7 +207,13 @@ pub async fn handle_backtest(
         look_back_period.to_f64().ok_or(CliError::ArithmeticError)? * 2.0;
     assert!(look_back_period_in_days < DAYS_PER_YEAR);
     let apy = calculate_apy(rate_of_return, look_back_period_in_days, DAYS_PER_YEAR);
-    info!("apy: {}", apy);
+
+    let stake_utilization_ratio =
+        calculate_stake_utilization_rate(db_connection, look_back_period, current_epoch).await?;
+
+    // info!("apy: {}", apy);
+    let final_apy = apy * stake_utilization_ratio;
+    info!("APY : {}", final_apy);
 
     Ok(())
 }
@@ -250,16 +256,100 @@ fn calculate_apy(r: f64, t: f64, n: f64) -> f64 {
     (1.0 + r).powf(n / t) - 1.0
 }
 
+fn calculate_stake_utilization(
+    total_active_balance: &BigDecimal,
+    total_inactive_balance: &BigDecimal,
+) -> Result<f64, CliError> {
+    let total_stake = total_active_balance.clone() + total_inactive_balance.clone();
+
+    if total_stake == BigDecimal::from(0) {
+        return Ok(0.0);
+    }
+
+    let utilization_rate = total_active_balance
+        .to_f64()
+        .ok_or(CliError::ArithmeticError)?
+        / total_stake.to_f64().ok_or(CliError::ArithmeticError)?;
+
+    Ok(utilization_rate)
+}
+
+async fn calculate_stake_utilization_rate(
+    db_connection: &Pool<Postgres>,
+    lookback_period: u16,
+    current_epoch: u16,
+) -> Result<f64, CliError> {
+    if lookback_period > current_epoch {
+        return Err(CliError::LookBackPeriodTooBig);
+    }
+
+    let (active_stake_data, inactive_stake_data) = futures::join!(
+        ActiveStakeJitoSol::fetch_balance_for_epoch_range(
+            db_connection,
+            current_epoch as u64,
+            lookback_period as u64,
+        ),
+        InactiveStakeJitoSol::fetch_balance_for_epoch_range(
+            db_connection,
+            current_epoch as u64,
+            lookback_period as u64,
+        )
+    );
+
+    let active_stake_data = active_stake_data?;
+    let inactive_stake_data = inactive_stake_data?;
+
+    if active_stake_data.count != inactive_stake_data.count {
+        return Err(CliError::RecordCountMismatch {
+            active_count: active_stake_data.count,
+            inactive_count: inactive_stake_data.count,
+        });
+    }
+
+    calculate_stake_utilization(&active_stake_data.balance, &inactive_stake_data.balance)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::types::BigDecimal;
 
     #[test]
     fn test_apy_calculation() {
         let r = 0.02; // 2% return
-        let t = 2.0;  // 2-day period
+        let t = 2.0; // 2-day period
         let n = 365.0; // Days in a year
         let apy = calculate_apy(r, t, n);
         assert!((apy - 36.113).abs() < 0.001, "APY calculation is incorrect");
+    }
+
+    #[test]
+    fn test_calculate_stake_utilization_rate_from_balances() {
+        // INACTIVE BALANCE is 0
+        let active_balance = BigDecimal::from(100);
+        let inactive_balance = BigDecimal::from(0);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1.0);
+
+        // ACTIVE BALANCE is 0
+        let active_balance = BigDecimal::from(0);
+        let inactive_balance = BigDecimal::from(100);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.0);
+
+        // TOTAL BALANCE is 0
+        let active_balance = BigDecimal::from(0);
+        let inactive_balance = BigDecimal::from(0);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.0);
+
+        let active_balance = BigDecimal::from(800);
+        let inactive_balance = BigDecimal::from(200);
+        let result = calculate_stake_utilization(&active_balance, &inactive_balance);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0.8);
     }
 }
