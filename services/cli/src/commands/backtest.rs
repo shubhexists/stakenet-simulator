@@ -211,7 +211,6 @@ pub async fn handle_backtest(
     let stake_utilization_ratio =
         calculate_stake_utilization_rate(db_connection, look_back_period, current_epoch).await?;
 
-    // info!("apy: {}", apy);
     let final_apy = apy * stake_utilization_ratio;
     info!("APY : {}", final_apy);
 

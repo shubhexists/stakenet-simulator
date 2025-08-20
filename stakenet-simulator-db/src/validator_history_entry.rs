@@ -101,8 +101,9 @@ fn int_to_upload_authority(int: i16) -> validator_history::MerkleRootUploadAutho
         1 => validator_history::MerkleRootUploadAuthority::Other,
         2 => validator_history::MerkleRootUploadAuthority::OldJitoLabs,
         3 => validator_history::MerkleRootUploadAuthority::TipRouter,
-        _ => {
-            panic!("unknown")
+        4 => validator_history::MerkleRootUploadAuthority::DNE,
+        a => {
+            panic!("unknown {}", a)
         }
     }
 }
