@@ -16,7 +16,7 @@ use crate::{
     rpc_utils::{RpcUtilsError, fetch_slot_history},
     stake_accounts::gather_stake_accounts,
     steward_utils::fetch_and_log_steward_config,
-    validator_history::load_and_record_validator_history,
+    validator_history_utils::load_and_record_validator_history,
 };
 
 mod cluster_history;
@@ -26,7 +26,7 @@ mod priority_fees;
 mod rpc_utils;
 mod stake_accounts;
 mod steward_utils;
-mod validator_history;
+mod validator_history_utils;
 
 #[derive(Debug, Error)]
 pub enum EpochRewardsTrackerError {
@@ -81,7 +81,7 @@ async fn main() -> Result<(), EpochRewardsTrackerError> {
             .await
             .unwrap(),
     );
-    let program_id = Pubkey::from_str(&config.validator_history_program_id).unwrap();
+    let program_id = Pubkey::from_str(&config.validator_history_program_id).unwrap_or(validator_history::ID);
     let rpc_client = RpcClient::new(config.rpc_url.clone());
 
     // fetch_and_log_steward_config(&rpc_client).await?;

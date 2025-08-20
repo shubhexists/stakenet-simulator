@@ -14,8 +14,13 @@ serde = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-client = { workspace = true }
 solana-sdk = { workspace = true }
-solana-transaction-status-client-types= { workspace = true }
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio-native-tls", "chrono", "bigdecimal" ] }
+solana-transaction-status-client-types = { workspace = true }
+sqlx = { workspace = true, features = [
+    "postgres",
+    "runtime-tokio-native-tls",
+    "chrono",
+    "bigdecimal",
+] }
 stakenet-simulator-db = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
