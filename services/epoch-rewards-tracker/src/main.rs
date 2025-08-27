@@ -1,26 +1,20 @@
-use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient};
-use solana_sdk::pubkey::{ParsePubkeyError, Pubkey};
-use sqlx::{Error as SqlxError, postgres::PgPoolOptions};
-use std::{str::FromStr, sync::Arc};
-use thiserror::Error;
-use tracing::{Level, error, info};
-use tracing_subscriber::EnvFilter;
-
 use crate::{
-    cluster_history::load_and_record_cluster_history,
-    config::{Config, ConfigError},
-    inflation::{
-        gather_inflation_rewards, gather_total_inflation_rewards_per_epoch, get_inflation_rewards,
-    },
-    priority_fees::gather_priority_fee_data_for_epoch,
-    rpc_utils::{RpcUtilsError, fetch_slot_history},
+    cluster_history::load_and_record_cluster_history, config::Config,
+    errors::EpochRewardsTrackerError, inflation::gather_inflation_rewards,
+    priority_fees::gather_priority_fee_data_for_epoch, rpc_utils::fetch_slot_history,
     stake_accounts::gather_stake_accounts,
-    steward_utils::fetch_and_log_steward_config,
     validator_history_utils::load_and_record_validator_history,
 };
-
+use clap::{Parser, Subcommand};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::pubkey::Pubkey;
+use sqlx::postgres::PgPoolOptions;
+use std::{str::FromStr, sync::Arc};
+use tracing::Level;
+use tracing_subscriber::EnvFilter;
 mod cluster_history;
 mod config;
+mod errors;
 mod inflation;
 mod priority_fees;
 mod rpc_utils;
@@ -28,31 +22,41 @@ mod stake_accounts;
 mod steward_utils;
 mod validator_history_utils;
 
-#[derive(Debug, Error)]
-pub enum EpochRewardsTrackerError {
-    #[error("ConfigError: {0}")]
-    ConfigError(#[from] ConfigError),
+#[derive(Parser, Debug)]
+pub struct GlobalArgs {
+    #[arg(short, long, env)]
+    pub rpc_url: String,
 
-    #[error("Solana ClientError: {0}")]
-    ClientError(#[from] ClientError),
+    #[arg(
+        long,
+        env,
+        default_value = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )]
+    pub db_connection_url: String,
 
-    #[error("ValidatorHistoryNotFound: {0}")]
-    ValidatorHistoryNotFound(Pubkey),
+    #[arg(long, env, default_value_t = validator_history::ID.to_string())]
+    pub validator_history_program_id: String,
 
-    #[error("ClusterHistoryNotFound: {0}")]
-    ClusterHistoryNotFound(Pubkey),
+    #[arg(long, env, default_value_t = 60)]
+    pub epoch_check_cycle_sec: u64,
+}
 
-    #[error("SqlxError: {0}")]
-    SqlxError(#[from] SqlxError),
+#[derive(Parser, Debug)]
+struct Cli {
+    #[command(flatten)]
+    pub globals: GlobalArgs,
 
-    #[error("ParsePubkeyError: {0}")]
-    ParsePubkeyError(#[from] ParsePubkeyError),
+    #[command(subcommand)]
+    pub command: Commands,
+}
 
-    #[error("RpcUtilsError: {0}")]
-    RpcUtilsError(#[from] RpcUtilsError),
-
-    #[error("MissingLeaderSchedule for epoch: {0}")]
-    MissingLeaderSchedule(u64),
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    FetchValidatorHistory,
+    FetchClusterHistory,
+    GetStakeAccounts,
+    GetInflationRewards,
+    GetPriorityFeeDataForEpoch { epoch: u64 },
 }
 
 #[tokio::main]
@@ -72,35 +76,52 @@ async fn main() -> Result<(), EpochRewardsTrackerError> {
         .with_target(false)
         .init();
 
-    let config = Config::from_env()?;
+    let cli: Cli = Cli::parse();
+    let config = Config {
+        rpc_url: cli.globals.rpc_url,
+        validator_history_program_id: cli.globals.validator_history_program_id,
+        db_connection_url: cli.globals.db_connection_url,
+        epoch_check_cycle_sec: cli.globals.epoch_check_cycle_sec,
+    };
 
     let db_conn_pool = Arc::new(
         PgPoolOptions::new()
             .max_connections(5)
             .connect(&config.db_connection_url)
             .await
-            .unwrap(),
+            .map_err(|_| EpochRewardsTrackerError::DatabaseConnectionError)?,
     );
-    let program_id = Pubkey::from_str(&config.validator_history_program_id).unwrap_or(validator_history::ID);
-    let rpc_client = RpcClient::new(config.rpc_url.clone());
 
-    // fetch_and_log_steward_config(&rpc_client).await?;
+    let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
+    let validator_history_program_id = Pubkey::from_str(&config.validator_history_program_id)
+        .map_err(|_| EpochRewardsTrackerError::InvalidPubkeyError)?;
+    match cli.command {
+        Commands::FetchValidatorHistory => {
+            load_and_record_validator_history(
+                &db_conn_pool,
+                &rpc_client,
+                validator_history_program_id,
+            )
+            .await?
+        }
+        Commands::FetchClusterHistory => {
+            load_and_record_cluster_history(&db_conn_pool, &rpc_client).await?
+        }
+        Commands::GetStakeAccounts => gather_stake_accounts(&db_conn_pool, &rpc_client).await?,
+        Commands::GetInflationRewards => {
+            gather_inflation_rewards(&db_conn_pool, &rpc_client).await?
+        }
+        Commands::GetPriorityFeeDataForEpoch { epoch } => {
+            gather_priority_fee_data_for_epoch(
+                &db_conn_pool,
+                &rpc_client,
+                epoch,
+                &rpc_client.get_epoch_schedule().await?,
+                &fetch_slot_history(&rpc_client).await?,
+            )
+            .await?
+        }
+    }
 
-    load_and_record_validator_history(&db_conn_pool, &rpc_client, program_id).await?;
-    // load_and_record_cluster_history(&db_conn_pool, &rpc_client).await?;
-    // get_inflation_rewards(&db_conn_pool, &rpc_client).await?;
-    // gather_stake_accounts(&db_conn_pool, &rpc_client).await?;
-    // gather_inflation_rewards(&db_conn_pool, &rpc_client).await?;
-    // gather_total_inflation_rewards_per_epoch(&db_conn_pool).await?;
-    // let epoch_schedule = rpc_client.get_epoch_schedule().await?;
-    // let slot_history = fetch_slot_history(&rpc_client).await?;
-    // gather_priority_fee_data_for_epoch(
-    //     &db_conn_pool,
-    //     &rpc_client,
-    //     811,
-    //     &epoch_schedule,
-    //     &slot_history,
-    // )
-    // .await?;
     Ok(())
 }

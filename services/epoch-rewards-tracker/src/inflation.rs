@@ -67,18 +67,6 @@ pub async fn gather_total_inflation_rewards_per_epoch(
                             commission,
                             inflation_reward.amount,
                         );
-                        // info!(
-                        //     "Validator {} received {} inflation rewards for epoch {}. {} | {} | {} | {}",
-                        //     vote_pubkey,
-                        //     total_inflation_rewards,
-                        //     epoch,
-                        //     history_entry
-                        //         .validator_history_entry
-                        //         .activated_stake_lamports,
-                        //     stake_amount,
-                        //     commission.unwrap_or(0),
-                        //     inflation_reward.amount,
-                        // );
                     }
                     info!("Rewards/Stake ratios: {:?}", stake_to_reward_ratios);
                 }
