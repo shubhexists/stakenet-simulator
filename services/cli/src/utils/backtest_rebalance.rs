@@ -1,5 +1,4 @@
 use crate::error::CliError;
-use futures::StreamExt;
 use jito_steward::{Config, constants::TVC_ACTIVATION_EPOCH, score::validator_score};
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use sqlx::{Pool, Postgres};
@@ -69,9 +68,6 @@ pub async fn rebalancing_simulation(
         let starting_stake_per_validator =
             lamports_after_staking / number_of_validator_delegations as u64;
 
-        // TODO: Currently this is being calculated for each cycle, but we could optimize this as
-        // we know the epoch rewards. So, we can initally calculate the top validators in parallel for each cycle.
-        // This could decrease the backtesting time by a lot.
         let top_validators = top_validators_for_epoch(
             &histories,
             &entries_by_validator,
@@ -79,8 +75,7 @@ pub async fn rebalancing_simulation(
             steward_config,
             current_cycle_start,
             number_of_validator_delegations,
-        )
-        .await?;
+        )?;
 
         let (cycle_ending_lamports, cycle_result) = simulate_returns(
             db_connection,
@@ -109,7 +104,7 @@ pub async fn rebalancing_simulation(
 
 /// Scores all validators at `scoring_epoch` and returns the top `number_of_validators` vote
 /// account pubkeys
-async fn top_validators_for_epoch(
+fn top_validators_for_epoch(
     histories: &[ValidatorHistory],
     entries_by_validator: &HashMap<String, Vec<ValidatorHistoryEntry>>,
     jito_cluster_history: &JitoClusterHistory,
@@ -119,10 +114,9 @@ async fn top_validators_for_epoch(
 ) -> Result<Vec<String>, CliError> {
     info!("Scoring validators for epoch {}", scoring_epoch);
 
-    let batch_size = 10;
-    let futures: Vec<_> = histories
+    let mut scored_validators: Vec<(String, f64)> = histories
         .iter()
-        .map(|validator_history| {
+        .filter_map(|validator_history| {
             score_validator(
                 validator_history.clone(),
                 entries_by_validator,
@@ -130,16 +124,9 @@ async fn top_validators_for_epoch(
                 steward_config,
                 scoring_epoch,
             )
+            .ok()
         })
         .collect();
-
-    let results: Vec<_> = futures::stream::iter(futures)
-        .buffer_unordered(batch_size)
-        .collect()
-        .await;
-
-    let mut scored_validators: Vec<(String, f64)> =
-        results.into_iter().filter_map(Result::ok).collect();
 
     scored_validators.sort_by(|a, b| b.1.total_cmp(&a.1));
 
@@ -153,7 +140,7 @@ async fn top_validators_for_epoch(
     Ok(top_validators)
 }
 
-pub async fn score_validator(
+pub fn score_validator(
     validator_history: ValidatorHistory,
     entries_by_validator: &HashMap<String, Vec<ValidatorHistoryEntry>>,
     jito_cluster_history: &JitoClusterHistory,
