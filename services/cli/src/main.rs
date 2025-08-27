@@ -1,7 +1,4 @@
-use crate::{
-    commands::{fetch_active_stake, fetch_inactive_stake},
-    error::CliError,
-};
+use crate::error::CliError;
 use clap::{Parser, Subcommand};
 use commands::backtest::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -14,7 +11,7 @@ pub mod commands;
 pub mod error;
 pub mod macros;
 pub mod steward_utils;
-pub mod utils;
+mod utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -39,8 +36,6 @@ pub enum Commands {
         #[command(flatten)]
         args: BacktestArgs,
     },
-    FetchInactiveStake,
-    FetchActiveStake,
 }
 
 #[tokio::main]
@@ -63,7 +58,7 @@ async fn main() -> Result<(), CliError> {
 
     let db_conn_pool = Arc::new(
         PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(10)
             .connect(&cli.db_connection_url)
             .await
             .unwrap(),
@@ -71,13 +66,10 @@ async fn main() -> Result<(), CliError> {
 
     match cli.command {
         Commands::Backtest { args } => {
-            // TODO: RPC URL was not needed in Fetch Active State, hence removed it globally
             let rpc_url = cli.rpc_url.as_ref().ok_or(CliError::InvalidRPCUrl)?;
             let rpc_client = RpcClient::new(rpc_url.to_string());
 
             handle_backtest(args, &db_conn_pool, &rpc_client).await
         }
-        Commands::FetchActiveStake => fetch_active_stake(&db_conn_pool).await,
-        Commands::FetchInactiveStake => fetch_inactive_stake(&db_conn_pool).await,
     }
 }

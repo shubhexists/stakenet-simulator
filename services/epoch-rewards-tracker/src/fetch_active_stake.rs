@@ -1,28 +1,24 @@
-use crate::utils::{INACTIVE_STAKE_DUNE_QUERY, wait_for_query_execution};
-use crate::{
-    error::CliError,
-    utils::{execute_dune_query, fetch_dune_query},
+use crate::dune::{
+    ACTIVE_STAKE_DUNE_QUERY, execute_dune_query, fetch_dune_query, wait_for_query_execution,
 };
-use sqlx::{Pool, Postgres, types::BigDecimal};
-use stakenet_simulator_db::inactive_stake_jito_sol::InactiveStakeJitoSol;
+use crate::errors::EpochRewardsTrackerError;
+use sqlx::types::BigDecimal;
+use sqlx::{Pool, Postgres};
+use stakenet_simulator_db::active_stake_jito_sol::ActiveStakeJitoSol;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::info;
 
-pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
-    let execute_client = execute_dune_query(INACTIVE_STAKE_DUNE_QUERY)
+pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), EpochRewardsTrackerError> {
+    let execute_client = execute_dune_query(ACTIVE_STAKE_DUNE_QUERY)
         .await
-        .map_err(|_| CliError::DuneApiError)?;
-
-    if execute_client.execution_id.is_empty() {
-        return Err(CliError::EmptyExecutionId);
-    }
+        .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
 
     wait_for_query_execution(&execute_client.execution_id).await?;
 
     let results = fetch_dune_query(execute_client.execution_id)
         .await
-        .map_err(|_| CliError::DuneApiError)?;
+        .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
 
     let mut epoch_balances: HashMap<u64, Vec<f64>> = HashMap::new();
 
@@ -33,11 +29,11 @@ pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
             .push(row.total_sol_balance);
     }
 
-    let records: Vec<InactiveStakeJitoSol> = epoch_balances
+    let records: Vec<ActiveStakeJitoSol> = epoch_balances
         .into_iter()
         .map(|(epoch, balances)| {
             let avg_balance = balances.iter().sum::<f64>() / balances.len() as f64;
-            InactiveStakeJitoSol::new(
+            ActiveStakeJitoSol::new(
                 epoch,
                 BigDecimal::from_str(&avg_balance.to_string()).unwrap(),
             )
@@ -48,7 +44,7 @@ pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), CliError> {
         info!("No records to process.");
     } else {
         info!("Processing records...");
-        InactiveStakeJitoSol::bulk_insert(db, records).await?;
+        ActiveStakeJitoSol::bulk_insert(db, records).await?;
         info!("Processing complete. Records inserted/updated.");
     }
 

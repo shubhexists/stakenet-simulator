@@ -43,6 +43,22 @@ pub async fn rebalancing_simulation(
     let jito_cluster_history =
         cluster_history.convert_to_jito_cluster_history(cluster_history_entries);
 
+    info!("Fetching all validator history entries...");
+    let all_entries =
+        ValidatorHistoryEntry::fetch_all_validator_history_entries(db_connection).await?;
+
+    let mut entries_by_validator: HashMap<String, Vec<ValidatorHistoryEntry>> = HashMap::new();
+    for entry in all_entries {
+        entries_by_validator
+            .entry(entry.vote_pubkey.clone())
+            .or_insert_with(Vec::new)
+            .push(entry);
+    }
+    info!(
+        "Grouped {} validators' history entries",
+        entries_by_validator.len()
+    );
+
     // TODO: Add check to ensure that we don't go past the current epoch
     while current_cycle_start < simulation_end_epoch {
         let current_cycle_end = std::cmp::min(
@@ -53,12 +69,12 @@ pub async fn rebalancing_simulation(
         let starting_stake_per_validator =
             lamports_after_staking / number_of_validator_delegations as u64;
 
-        // TODO: Currently this is being calculated for each cycle, but we could optimize this as 
+        // TODO: Currently this is being calculated for each cycle, but we could optimize this as
         // we know the epoch rewards. So, we can initally calculate the top validators in parallel for each cycle.
         // This could decrease the backtesting time by a lot.
         let top_validators = top_validators_for_epoch(
-            db_connection,
             &histories,
+            &entries_by_validator,
             &jito_cluster_history,
             steward_config,
             current_cycle_start,
@@ -91,9 +107,11 @@ pub async fn rebalancing_simulation(
     Ok(rebalancing_cycles)
 }
 
+/// Scores all validators at `scoring_epoch` and returns the top `number_of_validators` vote
+/// account pubkeys
 async fn top_validators_for_epoch(
-    db_connection: &Pool<Postgres>,
     histories: &[ValidatorHistory],
+    entries_by_validator: &HashMap<String, Vec<ValidatorHistoryEntry>>,
     jito_cluster_history: &JitoClusterHistory,
     steward_config: &Config,
     scoring_epoch: u16,
@@ -106,8 +124,8 @@ async fn top_validators_for_epoch(
         .iter()
         .map(|validator_history| {
             score_validator(
-                db_connection,
                 validator_history.clone(),
+                entries_by_validator,
                 jito_cluster_history,
                 steward_config,
                 scoring_epoch,
@@ -136,18 +154,23 @@ async fn top_validators_for_epoch(
 }
 
 pub async fn score_validator(
-    db_connection: &Pool<Postgres>,
     validator_history: ValidatorHistory,
+    entries_by_validator: &HashMap<String, Vec<ValidatorHistoryEntry>>,
     jito_cluster_history: &JitoClusterHistory,
     steward_config: &Config,
     current_epoch: u16,
 ) -> Result<(String, f64), CliError> {
-    let mut entries =
-        ValidatorHistoryEntry::fetch_by_validator(db_connection, &validator_history.vote_account)
-            .await?;
     let vote_account = validator_history.vote_account.clone();
+
+    // Get entries for this validator from the pre-fetched map
+    let mut entries = entries_by_validator
+        .get(&vote_account)
+        .cloned()
+        .unwrap_or_default();
+
     // Convert DB structures into on-chain structures
     let jito_validator_history = validator_history.convert_to_jito_validator_history(&mut entries);
+
     // Score the validator
     let score_result = validator_score(
         &jito_validator_history,
@@ -168,6 +191,8 @@ pub async fn score_validator(
     }
 }
 
+/// Simulates a Steward cycle where stake has been rebalanced and each validator starts with
+/// `starting_stake_per_validator`.
 async fn simulate_returns(
     db_connection: &Pool<Postgres>,
     selected_validators: &[String],
