@@ -1,6 +1,7 @@
 use solana_client::client_error::ClientError;
 use sqlx::Error as SqlxError;
 use thiserror::Error;
+use tokio::task::JoinError;
 
 #[derive(Debug, Error)]
 pub enum CliError {
@@ -32,4 +33,7 @@ pub enum CliError {
 
     #[error("Unable to fetch top validators")]
     TopValidatorsNotFound,
+
+    #[error("Error joining tokio task: {0}")]
+    TaskJoinError(#[from] JoinError),
 }

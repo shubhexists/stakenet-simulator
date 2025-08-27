@@ -1,4 +1,5 @@
 use crate::error::CliError;
+use futures::future::try_join_all;
 use jito_steward::{Config, constants::TVC_ACTIVATION_EPOCH, score::validator_score};
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use sqlx::{Pool, Postgres};
@@ -8,6 +9,7 @@ use stakenet_simulator_db::{
     validator_history_entry::ValidatorHistoryEntry,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{error, info};
 use validator_history::ClusterHistory as JitoClusterHistory;
 
@@ -42,6 +44,8 @@ pub async fn rebalancing_simulation(
     let jito_cluster_history =
         cluster_history.convert_to_jito_cluster_history(cluster_history_entries);
 
+    let jito_cluster_history = Arc::new(jito_cluster_history);
+
     info!("Fetching all validator history entries...");
     let all_entries =
         ValidatorHistoryEntry::fetch_all_validator_history_entries(db_connection).await?;
@@ -53,6 +57,9 @@ pub async fn rebalancing_simulation(
             .or_insert_with(Vec::new)
             .push(entry);
     }
+
+    let entries_by_validator = Arc::new(entries_by_validator);
+
     info!(
         "Grouped {} validators' history entries",
         entries_by_validator.len()
@@ -75,7 +82,8 @@ pub async fn rebalancing_simulation(
             steward_config,
             current_cycle_start,
             number_of_validator_delegations,
-        )?;
+        )
+        .await?;
 
         let (cycle_ending_lamports, cycle_result) = simulate_returns(
             db_connection,
@@ -102,30 +110,42 @@ pub async fn rebalancing_simulation(
     Ok(rebalancing_cycles)
 }
 
-/// Scores all validators at `scoring_epoch` and returns the top `number_of_validators` vote
-/// account pubkeys
-fn top_validators_for_epoch(
+async fn top_validators_for_epoch(
     histories: &[ValidatorHistory],
-    entries_by_validator: &HashMap<String, Vec<ValidatorHistoryEntry>>,
-    jito_cluster_history: &JitoClusterHistory,
+    entries_by_validator: &Arc<HashMap<String, Vec<ValidatorHistoryEntry>>>,
+    jito_cluster_history: &Arc<JitoClusterHistory>,
     steward_config: &Config,
     scoring_epoch: u16,
     number_of_validators: usize,
 ) -> Result<Vec<String>, CliError> {
     info!("Scoring validators for epoch {}", scoring_epoch);
 
-    let mut scored_validators: Vec<(String, f64)> = histories
+    let scoring_tasks: Vec<_> = histories
         .iter()
-        .filter_map(|validator_history| {
-            score_validator(
-                validator_history.clone(),
-                entries_by_validator,
-                jito_cluster_history,
-                steward_config,
-                scoring_epoch,
-            )
-            .ok()
+        .map(|validator_history| {
+            let validator_history = validator_history.clone();
+            let entries_by_validator = Arc::clone(entries_by_validator);
+            let jito_cluster_history = Arc::clone(jito_cluster_history);
+            let steward_config = steward_config.clone();
+            tokio::task::spawn_blocking(move || {
+                score_validator(
+                    validator_history,
+                    &entries_by_validator,
+                    &jito_cluster_history,
+                    &steward_config,
+                    scoring_epoch,
+                )
+            })
         })
+        .collect();
+
+    let scoring_results = try_join_all(scoring_tasks)
+        .await
+        .map_err(|e| CliError::TaskJoinError(e))?;
+
+    let mut scored_validators: Vec<(String, f64)> = scoring_results
+        .into_iter()
+        .filter_map(|result| result.ok())
         .collect();
 
     scored_validators.sort_by(|a, b| b.1.total_cmp(&a.1));
