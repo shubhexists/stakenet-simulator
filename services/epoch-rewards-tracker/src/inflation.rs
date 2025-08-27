@@ -1,7 +1,6 @@
 // TODO: For each validator load a stake account that has a long history
 
-use std::{collections::HashMap, str::FromStr};
-
+use crate::{EpochRewardsTrackerError, rpc_utils};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
@@ -10,9 +9,8 @@ use stakenet_simulator_db::{
     inflation_rewards::InflationReward, stake_accounts::StakeAccount,
     validator_history_entry::ValidatorHistoryEntry,
 };
+use std::{collections::HashMap, str::FromStr};
 use tracing::info;
-
-use crate::{EpochRewardsTrackerError, rpc_utils};
 
 /// Uses inflation_rewards data in the DB and the validator history (for total active stake) to
 /// calculate and update a validator's inflation

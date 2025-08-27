@@ -12,9 +12,13 @@ use sqlx::postgres::PgPoolOptions;
 use std::{str::FromStr, sync::Arc};
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
+
 mod cluster_history;
 mod config;
+mod dune;
 mod errors;
+mod fetch_active_stake;
+mod fetch_inactive_stake;
 mod inflation;
 mod priority_fees;
 mod rpc_utils;
@@ -56,6 +60,8 @@ pub enum Commands {
     FetchClusterHistory,
     GetStakeAccounts,
     GetInflationRewards,
+    FetchActiveStake,
+    FetchInactiveStake,
     GetPriorityFeeDataForEpoch { epoch: u64 },
 }
 
@@ -120,6 +126,11 @@ async fn main() -> Result<(), EpochRewardsTrackerError> {
                 &fetch_slot_history(&rpc_client).await?,
             )
             .await?
+        }
+        // THESE DO NOT REQUIRE AN RPC CLIENT
+        Commands::FetchActiveStake => fetch_active_stake::fetch_active_stake(&db_conn_pool).await?,
+        Commands::FetchInactiveStake => {
+            fetch_inactive_stake::fetch_inactive_stake(&db_conn_pool).await?
         }
     }
 

@@ -35,4 +35,10 @@ pub enum EpochRewardsTrackerError {
 
     #[error("Database connection error")]
     DatabaseConnectionError,
+
+    #[error("Execution Id not provided")]
+    EmptyExecutionId,
+
+    #[error("Dune API Error")]
+    DuneApiError,
 }

@@ -1,4 +1,4 @@
-use crate::error::CliError;
+use crate::errors::EpochRewardsTrackerError;
 use dotenvy::dotenv;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::Deserialize;
@@ -17,7 +17,6 @@ pub struct Row {
 #[derive(Debug, Deserialize)]
 pub struct ExecuteResponse {
     pub execution_id: String,
-    pub state: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,34 +31,9 @@ struct ApiResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ExecutionStatus {
-    pub execution_id: String,
-    pub query_id: u64,
-    pub is_execution_finished: bool,
     pub state: String,
-    pub submitted_at: String,
-
-    // "QUERY_STATE_COMPLETED" state
-    pub expires_at: Option<String>,
-    pub execution_started_at: Option<String>,
-    pub execution_ended_at: Option<String>,
-    pub result_metadata: Option<ResultMetadata>,
-
     // "QUERY_STATE_PENDING" state
     pub queue_position: Option<u32>,
-    pub max_inflight_interactive_executions: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ResultMetadata {
-    pub column_names: Vec<String>,
-    pub column_types: Vec<String>,
-    pub row_count: u32,
-    pub result_set_bytes: u32,
-    pub total_row_count: u32,
-    pub total_result_set_bytes: u32,
-    pub datapoint_count: u32,
-    pub pending_time_millis: Option<u64>,
-    pub execution_time_millis: Option<u64>,
 }
 
 pub const INACTIVE_STAKE_DUNE_QUERY: u64 = 5571499;
@@ -143,16 +117,16 @@ pub async fn fetch_dune_execution_status(
     Ok(response)
 }
 
-pub async fn wait_for_query_execution(execution_id: &str) -> Result<(), CliError> {
+pub async fn wait_for_query_execution(execution_id: &str) -> Result<(), EpochRewardsTrackerError> {
     if execution_id.is_empty() {
-        return Err(CliError::EmptyExecutionId);
+        return Err(EpochRewardsTrackerError::EmptyExecutionId);
     }
     info!("Submitted Dune query. Execution ID: {}", execution_id);
     let mut seen_states = HashSet::new();
     loop {
         let status = fetch_dune_execution_status(execution_id)
             .await
-            .map_err(|_| CliError::DuneApiError)?;
+            .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
         let state_str = status.state.as_str();
 
         // TODO: Have an enum for Dune states
