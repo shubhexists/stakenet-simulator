@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4", features = ["derive", "env"] }
 anchor-lang = { workspace = true }
 borsh = "1.5.7"
 dotenvy = { workspace = true }
@@ -28,3 +29,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 validator-history = { workspace = true }
 jito-steward = { workspace = true }
+serde_json = { version = "1.0.132" }
+reqwest = { version = "0.12", features = ["json"] }

@@ -1,13 +1,11 @@
-use std::str::FromStr;
-
+use crate::{EpochRewardsTrackerError, rpc_utils::fetch_stake_accounts_for_validator};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{pubkey::Pubkey, stake::state::StakeStateV2};
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::stake_accounts::StakeAccount;
 use stakenet_simulator_db::validator_history_entry::ValidatorHistoryEntry;
+use std::str::FromStr;
 use tracing::info;
-
-use crate::{EpochRewardsTrackerError, rpc_utils::fetch_stake_accounts_for_validator};
 
 pub async fn gather_stake_accounts(
     db_connection: &Pool<Postgres>,

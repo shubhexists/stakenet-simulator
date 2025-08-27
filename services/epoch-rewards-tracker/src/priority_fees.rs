@@ -1,9 +1,5 @@
 use std::collections::HashSet;
-
-use anchor_lang::{
-    prelude::{EpochSchedule, SlotHistory},
-    solana_program::example_mocks::solana_sdk::sysvar::slot_history,
-};
+use anchor_lang::prelude::{EpochSchedule, SlotHistory};
 use futures::future::join_all;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::reward_type::RewardType;
