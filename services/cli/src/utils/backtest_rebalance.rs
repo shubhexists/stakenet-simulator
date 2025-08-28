@@ -65,7 +65,6 @@ pub async fn rebalancing_simulation(
         entries_by_validator.len()
     );
 
-    // TODO: Add check to ensure that we don't go past the current epoch
     while current_cycle_start < simulation_end_epoch {
         let current_cycle_end = std::cmp::min(
             current_cycle_start + steward_cycle_rate,
@@ -150,9 +149,10 @@ async fn top_validators_for_epoch(
 
     scored_validators.sort_by(|a, b| b.1.total_cmp(&a.1));
 
-    // TODO: Handle the zero score case too I guess.
+    // Get only the validators that have score more than zero, maximum number of validators can be "number_of_validators"
     let top_validators: Vec<String> = scored_validators
         .into_iter()
+        .filter(|(_, score)| *score > 0.0)
         .take(number_of_validators)
         .map(|(vote_account, _score)| vote_account)
         .collect();
@@ -251,6 +251,7 @@ async fn simulate_returns(
 
             final_stake
         } else {
+            error!("No rewards for validator: {}", validator);
             starting_stake_per_validator
         };
 

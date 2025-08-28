@@ -60,8 +60,8 @@ pub struct BacktestArgs {
     priority_fee_scoring_start_epoch: Option<u16>,
     #[arg(long, env)]
     target_epoch: Option<u64>,
-    #[arg(long, env)]
-    steward_cycle_rate: Option<u64>,
+    #[arg(long, env, default_value = "10")]
+    steward_cycle_rate: u16,
 }
 
 impl BacktestArgs {
@@ -102,27 +102,25 @@ pub async fn handle_backtest(
     rpc_client: &RpcClient,
 ) -> Result<(), CliError> {
     // TODO: Should we pull the current epoch from RPC or make it be a CLI argument?
-    let current_epoch = 821;
+    let current_epoch: u16 = 821;
     // TODO: Determine how this should be passed. The number of epochs to look back
     let look_back_period = 50;
     // TODO: Determine if this should be an argument
     let number_of_validator_delegations = 200;
 
-    let steward_cycle_rate = args.steward_cycle_rate.unwrap_or(10) as u16;
-
     // Load existing steward config and overwrite parameters based on CLI args
     let mut steward_config = fetch_config(&rpc_client).await?;
     args.update_steward_config(&mut steward_config);
 
-    let simulation_start_epoch = current_epoch - look_back_period;
-    let simulation_end_epoch = current_epoch;
+    let simulation_start_epoch = current_epoch.saturating_sub(look_back_period);
+    let simulation_end_epoch = std::cmp::min(current_epoch, current_epoch);
 
     let rebalancing_cycles = rebalancing_simulation(
         db_connection,
         &steward_config,
         simulation_start_epoch,
         simulation_end_epoch,
-        steward_cycle_rate,
+        args.steward_cycle_rate,
         number_of_validator_delegations,
     )
     .await?;
