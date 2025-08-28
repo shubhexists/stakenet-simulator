@@ -11,6 +11,7 @@ pub mod commands;
 pub mod error;
 pub mod macros;
 pub mod steward_utils;
+mod utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -57,7 +58,7 @@ async fn main() -> Result<(), CliError> {
 
     let db_conn_pool = Arc::new(
         PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(10)
             .connect(&cli.db_connection_url)
             .await
             .unwrap(),

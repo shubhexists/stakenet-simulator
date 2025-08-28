@@ -10,6 +10,7 @@ use validator_history::{
 
 use crate::{big_decimal_u64::BigDecimalU64, decode_db, error::StakenetSimulatorDbError};
 
+#[derive(Clone)]
 pub struct ValidatorHistoryEntry {
     pub id: String,
     pub vote_pubkey: String,
