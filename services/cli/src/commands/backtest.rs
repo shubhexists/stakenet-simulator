@@ -122,6 +122,7 @@ pub async fn handle_backtest(
         simulation_end_epoch,
         args.steward_cycle_rate,
         number_of_validator_delegations,
+        steward_config.parameters.instant_unstake_cap_bps,
     )
     .await?;
 
