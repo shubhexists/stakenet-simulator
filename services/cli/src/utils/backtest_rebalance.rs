@@ -103,6 +103,8 @@ pub async fn rebalancing_simulation(
         .checked_mul(number_of_validator_delegations as u64)
         .ok_or(CliError::ArithmeticError)?;
 
+    let mut cycle_starting_lamports = 0u64;
+
     for current_epoch in simulation_start_epoch..simulation_end_epoch {
         info!("Processing epoch {}", current_epoch);
 
@@ -114,6 +116,24 @@ pub async fn rebalancing_simulation(
                 current_cycle_start + steward_cycle_rate,
                 simulation_end_epoch,
             );
+
+            if current_cycle_start > simulation_start_epoch {
+                let cycle_ending_lamports = validator_balances.values().sum::<u64>();
+                let cycle_result = RebalancingCycle {
+                    starting_total_lamports: cycle_starting_lamports,
+                    ending_total_lamports: cycle_ending_lamports,
+                };
+
+                info!(
+                    "Completed cycle: {:.3} SOL -> {:.3} SOL (return: {:.2}%)",
+                    cycle_starting_lamports as f64 / LAMPORTS_PER_SOL as f64,
+                    cycle_ending_lamports as f64 / LAMPORTS_PER_SOL as f64,
+                    ((cycle_ending_lamports as f64 / cycle_starting_lamports as f64) - 1.0) * 100.0
+                );
+
+                rebalancing_cycles.push(cycle_result);
+                total_lamports_staked = cycle_ending_lamports;
+            }
 
             top_validators = top_validators_for_epoch(
                 &histories,
@@ -135,6 +155,8 @@ pub async fn rebalancing_simulation(
                 validator_scores.insert(validator.vote_account.clone(), validator.score);
             }
 
+            cycle_starting_lamports = total_lamports_staked;
+
             info!(
                 "Initialized {} validators with {:.3} SOL each, total: {:.3} SOL",
                 top_validators.len(),
@@ -142,60 +164,50 @@ pub async fn rebalancing_simulation(
                 total_lamports_staked as f64 / LAMPORTS_PER_SOL as f64
             );
 
-            let validator_vote_accounts: Vec<String> = top_validators
-                .iter()
-                .map(|v| v.vote_account.clone())
-                .collect();
-
-            let (cycle_ending_lamports, cycle_result) = simulate_returns(
-                db_connection,
-                &validator_vote_accounts,
-                &validator_balances,
-                current_cycle_start,
-                current_cycle_end,
-                total_lamports_staked,
-            )
-            .await?;
-
-            info!(
-                "Cycle ending lamports: {:.3} SOL (was {:.3} SOL)",
-                cycle_ending_lamports as f64 / LAMPORTS_PER_SOL as f64,
-                total_lamports_staked as f64 / LAMPORTS_PER_SOL as f64
-            );
-
-            total_lamports_staked = cycle_ending_lamports;
-            rebalancing_cycles.push(cycle_result);
             current_cycle_start = current_cycle_end;
         }
 
-        if !top_validators.is_empty() && !is_rebalancing_epoch {
-            let current_validator_list: Vec<String> = top_validators
-                .iter()
-                .map(|v| v.vote_account.clone())
-                .collect();
+        if !top_validators.is_empty() {
+            if !is_rebalancing_epoch {
+                let current_validator_list: Vec<String> = top_validators
+                    .iter()
+                    .map(|v| v.vote_account.clone())
+                    .collect();
 
-            let validators_to_unstake = calculate_unstake_per_epoch(
-                &current_validator_list,
-                &histories,
-                &entries_by_validator,
-                &jito_cluster_history,
-                steward_config,
-                current_epoch,
-            )
-            .await?;
+                let validators_to_unstake = calculate_unstake_per_epoch(
+                    &current_validator_list,
+                    &histories,
+                    &entries_by_validator,
+                    &jito_cluster_history,
+                    steward_config,
+                    current_epoch,
+                )
+                .await?;
 
-            if !validators_to_unstake.is_empty() {
-                handle_instant_unstaking(
-                    &validators_to_unstake,
-                    &mut validator_balances,
-                    &top_validators,
-                    instant_unstake_cap_bps,
-                    number_of_validator_delegations,
-                    &mut total_lamports_staked,
-                )?;
+                if !validators_to_unstake.is_empty() {
+                    handle_instant_unstaking(
+                        &validators_to_unstake,
+                        &mut validator_balances,
+                        &top_validators,
+                        instant_unstake_cap_bps,
+                        number_of_validator_delegations,
+                        &mut total_lamports_staked,
+                    )?;
+                }
             }
 
+            let total_before_rewards = validator_balances.values().sum::<u64>();
             simulate_epoch_returns(db_connection, &mut validator_balances, current_epoch).await?;
+            let total_after_rewards = validator_balances.values().sum::<u64>();
+            total_lamports_staked = total_after_rewards;
+
+            info!(
+                "Epoch {} returns: {:.6} SOL -> {:.6} SOL (gain: {:.6} SOL)",
+                current_epoch,
+                total_before_rewards as f64 / LAMPORTS_PER_SOL as f64,
+                total_after_rewards as f64 / LAMPORTS_PER_SOL as f64,
+                (total_after_rewards - total_before_rewards) as f64 / LAMPORTS_PER_SOL as f64
+            );
 
             log_validator_balances_for_epoch(
                 &validator_balances,
@@ -203,6 +215,16 @@ pub async fn rebalancing_simulation(
                 "AFTER EPOCH REWARDS",
             );
         }
+    }
+
+    if !validator_balances.is_empty() {
+        let final_cycle_ending_lamports = validator_balances.values().sum::<u64>();
+        let final_cycle_result = RebalancingCycle {
+            starting_total_lamports: cycle_starting_lamports,
+            ending_total_lamports: final_cycle_ending_lamports,
+        };
+
+        rebalancing_cycles.push(final_cycle_result);
     }
 
     Ok(rebalancing_cycles)
@@ -235,8 +257,7 @@ fn handle_instant_unstaking(
     }
 
     if total_unstaked_amount > 0 {
-        let remaining_validator_count =
-            number_of_validator_delegations - validators_to_unstake.len();
+        let remaining_validator_count = top_validators.len() - validators_to_unstake.len();
 
         if remaining_validator_count > 0 {
             let new_target_balance_per_validator =
@@ -312,13 +333,9 @@ async fn simulate_epoch_returns(
 ) -> Result<(), CliError> {
     let validator_list: Vec<String> = validator_balances.keys().cloned().collect();
 
-    let rewards = EpochRewards::fetch_for_validators_and_epochs(
-        db_connection,
-        &validator_list,
-        current_epoch.into(),
-        (current_epoch + 1).into(),
-    )
-    .await?;
+    let rewards =
+        EpochRewards::fetch_for_single_epoch(db_connection, &validator_list, current_epoch.into())
+            .await?;
 
     for reward in rewards {
         if let Some(current_balance) = validator_balances.get_mut(&reward.vote_pubkey) {
@@ -497,83 +514,6 @@ pub fn score_validator(
             Ok((vote_account, 0.0))
         }
     }
-}
-
-/// Simulates a Steward cycle where stake has been rebalanced and each validator starts with
-/// their current balance from the validator_balances hashmap.
-async fn simulate_returns(
-    db_connection: &Pool<Postgres>,
-    selected_validators: &[String],
-    validator_balances: &HashMap<String, u64>,
-    cycle_start_epoch: u16,
-    cycle_end_epoch: u16,
-    total_starting_lamports: u64,
-) -> Result<(u64, RebalancingCycle), CliError> {
-    info!(
-        "Simulating returns for {} validators from epoch {} to {}",
-        selected_validators.len(),
-        cycle_start_epoch,
-        cycle_end_epoch,
-    );
-
-    let rewards = EpochRewards::fetch_for_validators_and_epochs(
-        db_connection,
-        &selected_validators.to_vec(),
-        cycle_start_epoch.into(),
-        cycle_end_epoch.into(),
-    )
-    .await?;
-
-    let mut validator_rewards: HashMap<String, Vec<EpochRewards>> = HashMap::new();
-    for reward in rewards {
-        validator_rewards
-            .entry(reward.vote_pubkey.clone())
-            .or_insert_with(Vec::new)
-            .push(reward);
-    }
-
-    for rewards_vec in validator_rewards.values_mut() {
-        rewards_vec.sort_by_key(|reward| reward.epoch);
-    }
-
-    let mut total_ending_lamports = 0u64;
-
-    for validator in selected_validators {
-        let starting_stake = validator_balances.get(validator).copied().unwrap_or(0);
-        let ending_stake = if let Some(validator_reward_history) = validator_rewards.get(validator)
-        {
-            let final_stake = validator_reward_history.iter().fold(
-                starting_stake,
-                |current_stake, epoch_reward| {
-                    let new_stake = epoch_reward.stake_after_epoch(current_stake);
-                    new_stake
-                },
-            );
-
-            final_stake
-        } else {
-            // TODO: Uncomment when we get actual data (For now this is overwhelming)
-            // error!("No rewards for validator: {}", validator);
-            starting_stake
-        };
-
-        total_ending_lamports = total_ending_lamports
-            .checked_add(ending_stake)
-            .ok_or(CliError::ArithmeticError)?;
-    }
-
-    info!(
-        "Total starting stake: {:.3} SOL, Total ending stake: {:.3} SOL",
-        total_starting_lamports as f64 / LAMPORTS_PER_SOL as f64,
-        total_ending_lamports as f64 / LAMPORTS_PER_SOL as f64,
-    );
-
-    let cycle_result = RebalancingCycle {
-        starting_total_lamports: total_starting_lamports,
-        ending_total_lamports: total_ending_lamports,
-    };
-
-    Ok((total_ending_lamports, cycle_result))
 }
 
 fn calculate_instant_unstake(

@@ -103,6 +103,20 @@ impl EpochRewards {
         .await
     }
 
+    pub async fn fetch_for_single_epoch(
+        db_connection: &Pool<Postgres>,
+        vote_accounts: &Vec<String>,
+        epoch: u64,
+    ) -> Result<Vec<Self>, Error> {
+        sqlx::query_as::<_, Self>(&format!(
+            "SELECT * FROM epoch_rewards WHERE vote_pubkey = ANY($1) AND epoch = $2",
+        ))
+        .bind(vote_accounts)
+        .bind(BigDecimal::from(epoch))
+        .fetch_all(db_connection)
+        .await
+    }
+
     /// Returns the APY as a fp
     // TODO: Currently it's a simple APR (not accounting for compounding epoch over epoch)
     pub fn apy(&self) -> Option<f64> {
