@@ -145,8 +145,7 @@ pub async fn rebalancing_simulation(
             )
             .await?;
 
-            let stake_per_validator =
-                total_lamports_staked / number_of_validator_delegations as u64;
+            let stake_per_validator: u64 = total_lamports_staked / top_validators.len() as u64;
 
             validator_balances.clear();
             validator_scores.clear();
