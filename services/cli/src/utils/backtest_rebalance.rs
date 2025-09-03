@@ -72,7 +72,9 @@ pub async fn rebalancing_simulation(
     let mut rebalancing_cycles = Vec::new();
     let mut current_cycle_start = simulation_start_epoch;
 
+    // Tracks each validator's actual balance epoch to epoch
     let mut validator_balances: HashMap<String, u64> = HashMap::new();
+    // Tracks the validator's score for the current steward cycle
     let mut validator_scores: HashMap<String, f64> = HashMap::new();
 
     let histories = ValidatorHistory::fetch_all(db_connection).await?;
@@ -168,6 +170,7 @@ pub async fn rebalancing_simulation(
 
         if !top_validators.is_empty() {
             if !is_rebalancing_epoch {
+                /////////////////////// Regular Epoch checks and rebalances ///////////////////////
                 let current_validator_list: Vec<String> = top_validators
                     .iter()
                     .map(|v| v.vote_account.clone())
@@ -359,6 +362,17 @@ async fn simulate_epoch_returns(
     Ok(())
 }
 
+/// Determiens which, if any, of the _selected_validators_ should be unstaked. Returns a vec of 
+/// their vote account pubkeys.
+/// 
+/// # Arguments
+/// - `selected_validators`: The orignal cohort of validators that received delegations for this 
+/// steward cycle
+/// - `histories`: ValidatorHistory (metadata) records for all validators
+/// - `entries_by_validator`: Mapping of validator to their ValidatorHistoryEntry records
+/// - `jito_cluster_history`: The ClusterHistory
+/// - `steward_config`: Steward `Config` being used for this back testing
+/// - `epoch`: Target epoch we're checking against
 async fn calculate_unstake_per_epoch(
     selected_validators: &[String],
     histories: &[ValidatorHistory],
@@ -372,7 +386,7 @@ async fn calculate_unstake_per_epoch(
         epoch,
         selected_validators.len()
     );
-    let epoch_start_slot = epoch as u64 * 432000;
+    let epoch_start_slot = epoch as u64 * 432_000;
     let unstake_tasks: Vec<_> = selected_validators
         .iter()
         .filter_map(|validator_vote_account| {
