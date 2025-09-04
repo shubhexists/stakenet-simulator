@@ -3,7 +3,7 @@ use futures::future::join_all;
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use stakenet_simulator_db::epoch_rewards::EpochRewards;
-use std::error::Error;
+use std::{collections::HashSet, error::Error};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Connected to Postgres");
 
     let rows = Arc::new(rows);
-    let epochs = rows.iter().map(|r| r.epoch).collect::<Vec<u64>>();
+    let epochs = rows.iter().map(|r| r.epoch).collect::<HashSet<u64>>();
     let client = Arc::new(reqwest::Client::new());
     let semaphore = Arc::new(Semaphore::new(20));
 
