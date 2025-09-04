@@ -29,37 +29,6 @@ pub struct ValidatorWithScore {
     pub score: f64,
 }
 
-// Helper function to log all validator balances for an epoch
-// Just for debug purposes
-fn log_validator_balances_for_epoch(
-    validator_balances: &HashMap<String, u64>,
-    epoch: u16,
-    context: &str,
-) {
-    let total_balance: u64 = validator_balances.values().sum();
-
-    info!("=== EPOCH {} VALIDATOR BALANCES ({}) ===", epoch, context);
-    info!(
-        "Total staked across all validators: {:.6} SOL",
-        total_balance as f64 / LAMPORTS_PER_SOL as f64
-    );
-    info!("Number of active validators: {}", validator_balances.len());
-
-    let mut sorted_validators: Vec<_> = validator_balances.iter().collect();
-    sorted_validators.sort_by(|a, b| b.1.cmp(a.1));
-
-    for (i, (vote_account, balance)) in sorted_validators.iter().enumerate() {
-        info!(
-            "  #{:2} {} - {:.6} SOL ({} lamports)",
-            i + 1,
-            &vote_account[..8],
-            **balance as f64 / LAMPORTS_PER_SOL as f64,
-            balance
-        );
-    }
-    info!("=== END EPOCH {} BALANCES ===", epoch);
-}
-
 pub async fn rebalancing_simulation(
     db_connection: &Pool<Postgres>,
     steward_config: &Config,
@@ -68,6 +37,7 @@ pub async fn rebalancing_simulation(
     steward_cycle_rate: u16,
     number_of_validator_delegations: usize,
     instant_unstake_cap_bps: u32,
+    validator_historical_start_epoch: u16,
 ) -> Result<Vec<RebalancingCycle>, CliError> {
     let mut rebalancing_cycles = Vec::new();
     let mut current_cycle_start = simulation_start_epoch;
@@ -85,8 +55,14 @@ pub async fn rebalancing_simulation(
     let jito_cluster_history = Arc::new(jito_cluster_history);
 
     info!("Fetching all validator history entries...");
-    let all_entries =
-        ValidatorHistoryEntry::fetch_all_validator_history_entries(db_connection).await?;
+    let all_entries = ValidatorHistoryEntry::fetch_all_records_between_epochs(
+        db_connection,
+        simulation_start_epoch
+            .saturating_sub(validator_historical_start_epoch)
+            .into(),
+        simulation_end_epoch.into(),
+    )
+    .await?;
     let mut entries_by_validator: HashMap<String, Vec<ValidatorHistoryEntry>> = HashMap::new();
     for entry in all_entries {
         entries_by_validator
@@ -113,6 +89,27 @@ pub async fn rebalancing_simulation(
         let is_rebalancing_epoch =
             (current_epoch - simulation_start_epoch) % steward_cycle_rate == 0;
 
+        let current_epoch_entries: HashMap<String, Vec<ValidatorHistoryEntry>> =
+            entries_by_validator
+                .iter()
+                .map(|(vote_pubkey, entries)| {
+                    let mut filtered_entries: Vec<ValidatorHistoryEntry> = entries
+                        .iter()
+                        .filter(|entry| entry.validator_history_entry.epoch <= current_epoch)
+                        .cloned()
+                        .collect();
+
+                    filtered_entries.sort_by(|a, b| {
+                        b.validator_history_entry
+                            .epoch
+                            .cmp(&a.validator_history_entry.epoch)
+                    });
+
+                    (vote_pubkey.clone(), filtered_entries)
+                })
+                .collect();
+
+        let current_epoch_entries = Arc::new(current_epoch_entries);
         if is_rebalancing_epoch {
             let current_cycle_end = std::cmp::min(
                 current_cycle_start + steward_cycle_rate,
@@ -139,7 +136,7 @@ pub async fn rebalancing_simulation(
 
             top_validators = top_validators_for_epoch(
                 &histories,
-                &entries_by_validator,
+                &current_epoch_entries,
                 &jito_cluster_history,
                 steward_config,
                 current_epoch,
@@ -179,7 +176,7 @@ pub async fn rebalancing_simulation(
                 let validators_to_unstake = calculate_unstake_per_epoch(
                     &current_validator_list,
                     &histories,
-                    &entries_by_validator,
+                    &current_epoch_entries,
                     &jito_cluster_history,
                     steward_config,
                     current_epoch,
@@ -210,12 +207,6 @@ pub async fn rebalancing_simulation(
                 total_after_rewards as f64 / LAMPORTS_PER_SOL as f64,
                 (total_after_rewards - total_before_rewards) as f64 / LAMPORTS_PER_SOL as f64
             );
-
-            log_validator_balances_for_epoch(
-                &validator_balances,
-                current_epoch,
-                "AFTER EPOCH REWARDS",
-            );
         }
     }
 
@@ -240,26 +231,59 @@ fn handle_instant_unstaking(
     number_of_validator_delegations: usize,
     total_lamports_staked: &mut u64,
 ) -> Result<(), CliError> {
+    let max_unstake_amount = (*total_lamports_staked as u128 * instant_unstake_cap_bps as u128
+        / 10000)
+        .min(u64::MAX as u128) as u64;
+
+    let mut validators_with_scores: Vec<(String, f64, u64)> = validators_to_unstake
+        .iter()
+        .filter_map(|vote_account| {
+            let score = top_validators
+                .iter()
+                .find(|v| &v.vote_account == vote_account)
+                .map(|v| v.score)
+                .unwrap_or(0.0);
+
+            validator_balances
+                .get(vote_account)
+                .map(|&balance| (vote_account.clone(), score, balance))
+        })
+        .collect();
+
+    validators_with_scores
+        .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut actual_validators_to_unstake = Vec::new();
     let mut total_unstaked_amount = 0u64;
 
-    for validator in validators_to_unstake {
-        if let Some(current_balance) = validator_balances.get_mut(validator) {
-            let unstake_amount = (*current_balance as u128 * instant_unstake_cap_bps as u128
-                / 10000)
-                .min(u64::MAX as u128) as u64;
+    for (vote_account, _score, balance) in validators_with_scores {
+        let potential_unstake = total_unstaked_amount + balance;
 
-            *current_balance = current_balance
-                .checked_sub(unstake_amount)
+        if potential_unstake <= max_unstake_amount {
+            actual_validators_to_unstake.push(vote_account);
+            total_unstaked_amount += balance;
+        } else {
+            break;
+        }
+    }
+
+    for validator in &actual_validators_to_unstake {
+        if let Some(current_balance) = validator_balances.get_mut(validator) {
+            total_unstaked_amount = total_unstaked_amount
+                .checked_sub(*current_balance)
                 .ok_or(CliError::ArithmeticError)?;
 
+            let unstaked_amount = *current_balance;
+            *current_balance = 0;
+
             total_unstaked_amount = total_unstaked_amount
-                .checked_add(unstake_amount)
+                .checked_add(unstaked_amount)
                 .ok_or(CliError::ArithmeticError)?;
         }
     }
 
     if total_unstaked_amount > 0 {
-        let remaining_validator_count = top_validators.len() - validators_to_unstake.len();
+        let remaining_validator_count = top_validators.len() - actual_validators_to_unstake.len();
 
         if remaining_validator_count > 0 {
             let new_target_balance_per_validator =
@@ -267,7 +291,7 @@ fn handle_instant_unstaking(
 
             let mut validators_by_score: Vec<_> = top_validators
                 .iter()
-                .filter(|v| !validators_to_unstake.contains(&v.vote_account))
+                .filter(|v| !actual_validators_to_unstake.contains(&v.vote_account))
                 .collect();
             validators_by_score.sort_by(|a, b| {
                 b.score
@@ -298,13 +322,6 @@ fn handle_instant_unstaking(
                         remaining_to_distribute = remaining_to_distribute
                             .checked_sub(amount_to_add)
                             .ok_or(CliError::ArithmeticError)?;
-
-                        info!(
-                            "Redistributed {:.3} SOL to validator {} (balance now: {:.3} SOL)",
-                            amount_to_add as f64 / LAMPORTS_PER_SOL as f64,
-                            validator.vote_account,
-                            *current_balance as f64 / LAMPORTS_PER_SOL as f64
-                        );
                     }
                 }
             }
@@ -318,10 +335,11 @@ fn handle_instant_unstaking(
         }
 
         info!(
-            "Unstaked total: {:.3} SOL from {} validators, redistributed to remaining {} validators",
+            "Unstaked total: {:.3} SOL from {} validators (max allowed: {:.3} SOL), redistributed to remaining {} validators",
             total_unstaked_amount as f64 / LAMPORTS_PER_SOL as f64,
-            validators_to_unstake.len(),
-            number_of_validator_delegations - validators_to_unstake.len()
+            actual_validators_to_unstake.len(),
+            max_unstake_amount as f64 / LAMPORTS_PER_SOL as f64,
+            number_of_validator_delegations - actual_validators_to_unstake.len()
         );
     }
 
@@ -341,32 +359,19 @@ async fn simulate_epoch_returns(
 
     for reward in rewards {
         if let Some(current_balance) = validator_balances.get_mut(&reward.vote_pubkey) {
-            let old_balance = *current_balance;
             let new_balance = reward.stake_after_epoch(*current_balance);
             *current_balance = new_balance;
-
-            let reward_amount = new_balance.saturating_sub(old_balance);
-            if reward_amount > 0 {
-                info!(
-                    "Validator {} earned {:.6} SOL in epoch {} ({} -> {} lamports)",
-                    &reward.vote_pubkey[..8],
-                    reward_amount as f64 / LAMPORTS_PER_SOL as f64,
-                    current_epoch,
-                    old_balance,
-                    new_balance
-                );
-            }
         }
     }
 
     Ok(())
 }
 
-/// Determiens which, if any, of the _selected_validators_ should be unstaked. Returns a vec of 
+/// Determiens which, if any, of the _selected_validators_ should be unstaked. Returns a vec of
 /// their vote account pubkeys.
-/// 
+///
 /// # Arguments
-/// - `selected_validators`: The orignal cohort of validators that received delegations for this 
+/// - `selected_validators`: The orignal cohort of validators that received delegations for this
 /// steward cycle
 /// - `histories`: ValidatorHistory (metadata) records for all validators
 /// - `entries_by_validator`: Mapping of validator to their ValidatorHistoryEntry records
@@ -381,11 +386,6 @@ async fn calculate_unstake_per_epoch(
     steward_config: &Config,
     epoch: u16,
 ) -> Result<Vec<String>, CliError> {
-    info!(
-        "Checking instant unstake for epoch {} on {} validators",
-        epoch,
-        selected_validators.len()
-    );
     let epoch_start_slot = epoch as u64 * 432_000;
     let unstake_tasks: Vec<_> = selected_validators
         .iter()
@@ -520,10 +520,11 @@ pub fn score_validator(
     match score_result {
         Ok(score) => Ok((vote_account, score.score)),
         Err(_) => {
-            error!(
-                "Erroring scoring validator {}",
-                jito_validator_history.vote_account
-            );
+            // TBD: Should we log this error? There are many validators that will error out
+            // error!(
+            //     "Erroring scoring validator {}: {}",
+            //     jito_validator_history.vote_account, q
+            // );
             Ok((vote_account, 0.0))
         }
     }

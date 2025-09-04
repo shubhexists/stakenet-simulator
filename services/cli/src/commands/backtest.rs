@@ -122,6 +122,13 @@ pub async fn handle_backtest(
         args.steward_cycle_rate,
         number_of_validator_delegations,
         steward_config.parameters.instant_unstake_cap_bps,
+        std::cmp::max(
+            steward_config.parameters.mev_commission_range,
+            std::cmp::max(
+                steward_config.parameters.epoch_credits_range,
+                steward_config.parameters.commission_range,
+            ),
+        ),
     )
     .await?;
 
