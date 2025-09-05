@@ -37,7 +37,7 @@ pub async fn rebalancing_simulation(
     steward_cycle_rate: u16,
     number_of_validator_delegations: usize,
     instant_unstake_cap_bps: u32,
-    validator_historical_start_epoch: u16,
+    validator_historical_start_offset: u16,
 ) -> Result<Vec<RebalancingCycle>, CliError> {
     let mut rebalancing_cycles = Vec::new();
     let mut current_cycle_start = simulation_start_epoch;
@@ -58,7 +58,7 @@ pub async fn rebalancing_simulation(
     let all_entries = ValidatorHistoryEntry::fetch_all_records_between_epochs(
         db_connection,
         simulation_start_epoch
-            .saturating_sub(validator_historical_start_epoch)
+            .saturating_sub(validator_historical_start_offset)
             .into(),
         simulation_end_epoch.into(),
     )
@@ -112,7 +112,7 @@ pub async fn rebalancing_simulation(
         let current_epoch_entries = Arc::new(current_epoch_entries);
 
         if is_rebalancing_epoch {
-            let (new_top_validators, new_cycle_starting_lamports) = process_steward_cycle(
+            (top_validators, cycle_starting_lamports) = process_steward_cycle(
                 &histories,
                 &current_epoch_entries,
                 &jito_cluster_history,
@@ -130,9 +130,6 @@ pub async fn rebalancing_simulation(
                 cycle_starting_lamports,
             )
             .await?;
-
-            top_validators = new_top_validators;
-            cycle_starting_lamports = new_cycle_starting_lamports;
         }
 
         if !top_validators.is_empty() {
