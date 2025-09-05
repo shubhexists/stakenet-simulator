@@ -244,6 +244,20 @@ impl ValidatorHistoryEntry {
         .await
     }
 
+    pub async fn fetch_all_records_between_epochs(
+        db_connection: &Pool<Postgres>,
+        start_epoch: u64,
+        end_epoch: u64,
+    ) -> Result<Vec<Self>, Error> {
+        sqlx::query_as::<_, Self>(&format!(
+            "SELECT * FROM validator_history_entries WHERE epoch >= $1 AND epoch <= $2",
+        ))
+        .bind(start_epoch as i32)
+        .bind(end_epoch as i32)
+        .fetch_all(db_connection)
+        .await
+    }
+
     pub async fn get_all_vote_pubkeys(
         db_connection: &Pool<Postgres>,
     ) -> Result<Vec<String>, Error> {

@@ -113,15 +113,22 @@ pub async fn handle_backtest(
     args.update_steward_config(&mut steward_config);
 
     let simulation_start_epoch = current_epoch.saturating_sub(look_back_period);
-    let simulation_end_epoch = std::cmp::min(current_epoch, current_epoch);
 
     let rebalancing_cycles = rebalancing_simulation(
         db_connection,
         &steward_config,
         simulation_start_epoch,
-        simulation_end_epoch,
+        current_epoch,
         args.steward_cycle_rate,
         number_of_validator_delegations,
+        steward_config.parameters.instant_unstake_cap_bps,
+        std::cmp::max(
+            steward_config.parameters.mev_commission_range,
+            std::cmp::max(
+                steward_config.parameters.epoch_credits_range,
+                steward_config.parameters.commission_range,
+            ),
+        ),
     )
     .await?;
 

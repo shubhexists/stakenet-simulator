@@ -103,6 +103,20 @@ impl EpochRewards {
         .await
     }
 
+    pub async fn fetch_for_single_epoch(
+        db_connection: &Pool<Postgres>,
+        vote_accounts: &Vec<String>,
+        epoch: u64,
+    ) -> Result<Vec<Self>, Error> {
+        sqlx::query_as::<_, Self>(&format!(
+            "SELECT * FROM epoch_rewards WHERE vote_pubkey = ANY($1) AND epoch = $2",
+        ))
+        .bind(vote_accounts)
+        .bind(BigDecimal::from(epoch))
+        .fetch_all(db_connection)
+        .await
+    }
+
     /// Returns the APY as a fp
     // TODO: Currently it's a simple APR (not accounting for compounding epoch over epoch)
     pub fn apy(&self) -> Option<f64> {
@@ -142,19 +156,19 @@ impl EpochRewards {
         let inflation_for_stakers = self.total_inflation_rewards
             * (MAX_BPS - u64::from(self.inflation_commission_bps))
             / MAX_BPS;
-        let inflation_rewards = inflation_for_stakers * current_active_stake / self.active_stake;
+        let inflation_rewards = u128::from(inflation_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
 
         let mev_for_stakers =
             self.total_mev_rewards * (MAX_BPS - u64::from(self.mev_commission_bps)) / MAX_BPS;
-        let mev_rewards = mev_for_stakers * current_active_stake / self.active_stake;
+        let mev_rewards = u128::from(mev_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
 
         let priority_fee_for_stakers = self.total_priority_fee_rewards
             * (MAX_BPS - u64::from(self.priority_fee_commission_bps))
             / MAX_BPS;
         let priority_fee_rewards =
-            priority_fee_for_stakers * current_active_stake / self.active_stake;
+            u128::from(priority_fee_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
 
-        current_active_stake + inflation_rewards + mev_rewards + priority_fee_rewards
+        current_active_stake + inflation_rewards as u64 + mev_rewards as u64 + priority_fee_rewards as u64
     }
 }
 
