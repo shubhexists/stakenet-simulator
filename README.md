@@ -6,6 +6,10 @@ This repo contains:
 of the steward protocol with the new parameters provided in the CLI.
 - `services/epoch-rewards-tracker` - It is a seperate binary target that is used to inject data into the database 
 
+## Table of Contents
+- [Stakenet Cli](https://github.com/exo-tech-xyz/stakenet-simulator?tab=readme-ov-file#stakenet-cli)
+- [Epoch Rewards Tracker](https://github.com/exo-tech-xyz/stakenet-simulator?tab=readme-ov-file#epoch-rewards-tracker)
+
 ## stakenet-cli
 Runs a backtesting simulation with configurable steward parameters.
 
