@@ -1,5 +1,6 @@
 use crate::dune::{
-    ACTIVE_STAKE_DUNE_QUERY, execute_dune_query, fetch_dune_query, wait_for_query_execution,
+    ACTIVE_STAKE_DUNE_QUERY, StakeRow, execute_dune_query, fetch_dune_query,
+    wait_for_query_execution,
 };
 use crate::errors::EpochRewardsTrackerError;
 use sqlx::types::BigDecimal;
@@ -16,7 +17,7 @@ pub async fn fetch_active_stake(db: &Pool<Postgres>) -> Result<(), EpochRewardsT
 
     wait_for_query_execution(&execute_client.execution_id).await?;
 
-    let results = fetch_dune_query(execute_client.execution_id)
+    let results: Vec<StakeRow> = fetch_dune_query(execute_client.execution_id)
         .await
         .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
 

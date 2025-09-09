@@ -1,6 +1,7 @@
 use crate::{
     dune::{
-        INACTIVE_STAKE_DUNE_QUERY, execute_dune_query, fetch_dune_query, wait_for_query_execution,
+        INACTIVE_STAKE_DUNE_QUERY, StakeRow, execute_dune_query, fetch_dune_query,
+        wait_for_query_execution,
     },
     errors::EpochRewardsTrackerError,
 };
@@ -21,7 +22,7 @@ pub async fn fetch_inactive_stake(db: &Pool<Postgres>) -> Result<(), EpochReward
 
     wait_for_query_execution(&execute_client.execution_id).await?;
 
-    let results = fetch_dune_query(execute_client.execution_id)
+    let results: Vec<StakeRow> = fetch_dune_query(execute_client.execution_id)
         .await
         .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
 

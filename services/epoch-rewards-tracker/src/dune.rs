@@ -1,17 +1,25 @@
 use crate::errors::EpochRewardsTrackerError;
 use dotenvy::dotenv;
 use reqwest::header::{HeaderMap, HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use std::collections::HashSet;
 use std::env;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
 #[derive(Debug, Deserialize, PartialEq)]
-pub struct Row {
+pub struct StakeRow {
     pub day: String,
     pub total_sol_balance: f64,
     pub approx_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WithdrawAndDepositsRow {
+    deposit_sol: f64,
+    deposit_stake: f64,
+    withdraw_sol: f64,
+    withdraw_stake: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -20,13 +28,13 @@ pub struct ExecuteResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct ResultData {
-    rows: Vec<Row>,
+struct ResultData<T> {
+    rows: Vec<T>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ApiResponse {
-    result: ResultData,
+struct ApiResponse<T> {
+    result: ResultData<T>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +46,7 @@ pub struct ExecutionStatus {
 
 pub const INACTIVE_STAKE_DUNE_QUERY: u64 = 5571499;
 pub const ACTIVE_STAKE_DUNE_QUERY: u64 = 5571504;
+pub const WITHDRAW_DEPOSIT_TRANSACTIONS_QUERY: u64 = 3033800;
 
 pub async fn execute_dune_query(
     query_id: u64,
@@ -65,11 +74,11 @@ pub async fn execute_dune_query(
     Ok(response)
 }
 
-pub async fn fetch_dune_query(
-    execution_id: String,
-) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
+pub async fn fetch_dune_query<T>(execution_id: String) -> Result<Vec<T>, Box<dyn std::error::Error>>
+where
+    T: DeserializeOwned,
+{
     dotenv().ok();
-
     let api_key = env::var("DUNE_API_KEY")?;
     let url = format!("https://api.dune.com/api/v1/execution/{execution_id}/results");
     let client = reqwest::Client::new();
@@ -83,7 +92,7 @@ pub async fn fetch_dune_query(
         .send()
         .await?
         .error_for_status()?
-        .json::<ApiResponse>()
+        .json::<ApiResponse<T>>()
         .await?;
 
     Ok(response.result.rows)
