@@ -91,6 +91,7 @@ The application uses environment variables for configuration:
 | `DB_CONNECTION_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
 | `VALIDATOR_HISTORY_PROGRAM_ID` | Validator history program ID | Validator history program default |
 | `EPOCH_CHECK_CYCLE_SEC` | Epoch check cycle in seconds | `60` |
+| `DUNE_API_KEY` | For operations that require Dune | None |
 
 ### Command Line Interface
 
