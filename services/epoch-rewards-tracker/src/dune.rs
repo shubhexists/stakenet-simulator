@@ -16,10 +16,11 @@ pub struct StakeRow {
 
 #[derive(Debug, Deserialize)]
 pub struct WithdrawAndDepositsRow {
-    deposit_sol: f64,
-    deposit_stake: f64,
-    withdraw_sol: f64,
-    withdraw_stake: f64,
+    pub epoch: u64,
+    pub deposit_sol: f64,
+    pub deposit_stake: f64,
+    pub withdraw_sol: f64,
+    pub withdraw_stake: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,7 +47,7 @@ pub struct ExecutionStatus {
 
 pub const INACTIVE_STAKE_DUNE_QUERY: u64 = 5571499;
 pub const ACTIVE_STAKE_DUNE_QUERY: u64 = 5571504;
-pub const WITHDRAW_DEPOSIT_TRANSACTIONS_QUERY: u64 = 3033800;
+pub const WITHDRAW_DEPOSIT_TRANSACTIONS_QUERY: u64 = 5751846;
 
 pub async fn execute_dune_query(
     query_id: u64,

@@ -4,8 +4,7 @@
 --
 CREATE TABLE
     IF NOT EXISTS public.withdraws_and_deposits (
-        id VARCHAR(50) NOT NULL,
-        epoch public.u_64 NOT NULL,
+        epoch public.u_64 NOT NULL PRIMARY KEY,
         deposit_sol NUMERIC(20, 9) DEFAULT 0,
         withdraw_stake NUMERIC(20, 9) DEFAULT 0,
         deposit_stake NUMERIC(20, 9) DEFAULT 0,
@@ -15,11 +14,6 @@ CREATE TABLE
 
 -- Enable RLS
 ALTER TABLE public.withdraws_and_deposits ENABLE ROW LEVEL SECURITY;
-
--- Primary Key
-CREATE UNIQUE INDEX withdraws_and_deposits_pkey ON public.withdraws_and_deposits USING btree (id);
-
-ALTER TABLE public.withdraws_and_deposits ADD CONSTRAINT withdraws_and_deposits_pkey PRIMARY KEY USING INDEX withdraws_and_deposits_pkey;
 
 -- Grants: anon
 GRANT DELETE,

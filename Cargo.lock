@@ -1502,6 +1502,7 @@ dependencies = [
  "envy",
  "futures",
  "jito-steward",
+ "num-traits",
  "regex",
  "reqwest",
  "serde",
