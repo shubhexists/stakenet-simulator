@@ -14,7 +14,7 @@ of the steward protocol with the new parameters provided in the CLI.
 Runs a backtesting simulation with configurable steward parameters.
 
 ```bash
-steward-backtest-cli backtest [OPTIONS]
+steward-simulator-cli backtest [OPTIONS]
 ```
 
 Set `env` variables - 
@@ -22,6 +22,7 @@ Set `env` variables -
 - DB_CONNECTION_URL
 - VALIDATOR_HISTORY_PROGRAM_ID (`HistoryJTGbKQD2mRgLZ3XhqHnN811Qpez8X9kCcGHoa`)
 - EPOCH_CHECK_CYCLE_SEC
+- DUNE_API_KEY
 
 ## Configuration Parameters
 
