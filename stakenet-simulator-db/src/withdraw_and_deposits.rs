@@ -3,36 +3,33 @@ use sqlx::{Error, FromRow, Pool, Postgres, QueryBuilder, types::BigDecimal};
 
 #[derive(FromRow, Debug)]
 pub struct WithdrawsAndDeposits {
+    pub id: String, // {epoch}-{vote_pubkey}
     #[sqlx(try_from = "BigDecimalU64")]
     pub epoch: u64,
-    pub deposit_sol: BigDecimal,
+    pub vote_pubkey: String,
     pub withdraw_stake: BigDecimal,
     pub deposit_stake: BigDecimal,
-    pub withdraw_sol: BigDecimal,
-    pub total_stake: BigDecimal,
 }
 
 impl WithdrawsAndDeposits {
-    const NUM_FIELDS: u8 = 6;
+    const NUM_FIELDS: u8 = 5;
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;
     const INSERT_QUERY: &str = "INSERT INTO withdraws_and_deposits \
-        (epoch, deposit_sol, withdraw_stake, deposit_stake, withdraw_sol, total_stake) VALUES ";
+        (id, epoch, vote_pubkey, withdraw_stake, deposit_stake) VALUES ";
 
     pub fn new(
         epoch: u64,
-        deposit_sol: BigDecimal,
+        vote_pubkey: String,
         withdraw_stake: BigDecimal,
         deposit_stake: BigDecimal,
-        withdraw_sol: BigDecimal,
-        total_stake: BigDecimal,
     ) -> Self {
+        let id = format!("{}-{}", epoch, vote_pubkey);
         Self {
+            id,
             epoch,
-            deposit_sol,
+            vote_pubkey,
             withdraw_stake,
             deposit_stake,
-            withdraw_sol,
-            total_stake,
         }
     }
 
@@ -56,16 +53,15 @@ impl WithdrawsAndDeposits {
             }
 
             let mut separated = query_builder.separated(", ");
+            separated.push_bind(record.id);
             separated.push_bind(BigDecimal::from(record.epoch));
-            separated.push_bind(record.deposit_sol);
+            separated.push_bind(record.vote_pubkey);
             separated.push_bind(record.withdraw_stake);
             separated.push_bind(record.deposit_stake);
-            separated.push_bind(record.withdraw_sol);
-            separated.push_bind(record.total_stake);
             separated.push_unseparated(") ");
 
             if num_records >= Self::INSERT_CHUNK_SIZE {
-                query_builder.push(" ON CONFLICT (epoch) DO NOTHING");
+                query_builder.push(" ON CONFLICT (id) DO NOTHING");
                 let query = query_builder.build();
                 query.execute(db_connection).await?;
                 num_records = 0;
@@ -74,7 +70,7 @@ impl WithdrawsAndDeposits {
         }
 
         if num_records > 0 {
-            query_builder.push(" ON CONFLICT (epoch) DO NOTHING");
+            query_builder.push(" ON CONFLICT (id) DO NOTHING");
             let query = query_builder.build();
             query.execute(db_connection).await?;
         }
@@ -84,16 +80,16 @@ impl WithdrawsAndDeposits {
     pub async fn get_details_for_epoch(
         db_connection: &Pool<Postgres>,
         epoch: u64,
-    ) -> Result<Self, Error> {
+    ) -> Result<Vec<Self>, Error> {
         let query = "
-            SELECT epoch, deposit_sol, withdraw_stake, deposit_stake, withdraw_sol, total_stake
+            SELECT id, epoch, vote_pubkey, withdraw_stake, deposit_stake
             FROM withdraws_and_deposits
             WHERE epoch = $1
         ";
 
         sqlx::query_as::<_, Self>(query)
             .bind(BigDecimal::from(epoch))
-            .fetch_one(db_connection)
+            .fetch_all(db_connection)
             .await
     }
 }

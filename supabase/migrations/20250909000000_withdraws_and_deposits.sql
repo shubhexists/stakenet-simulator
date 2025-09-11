@@ -4,11 +4,11 @@
 --
 CREATE TABLE
     IF NOT EXISTS public.withdraws_and_deposits (
-        epoch public.u_64 NOT NULL PRIMARY KEY,
-        deposit_sol NUMERIC(20, 9) DEFAULT 0,
+        "id" VARCHAR(70) NOT NULL PRIMARY KEY, -- {epoch}-{vote_pubkey}
+        epoch public.u_64 NOT NULL,
+        "vote_pubkey" "public"."solana_pubkey",
         withdraw_stake NUMERIC(20, 9) DEFAULT 0,
         deposit_stake NUMERIC(20, 9) DEFAULT 0,
-        withdraw_sol NUMERIC(20, 9) DEFAULT 0,
         total_stake NUMERIC(20, 9) DEFAULT 0
     );
 
