@@ -28,7 +28,7 @@ pub struct RebalancingCycle {
 }
 
 #[derive(Debug, Clone)]
-pub struct EpochData {
+pub struct EpochWithdrawDepositStakeData {
     pub withdraw_stake: f64,
     pub deposit_stake: f64,
     pub active_balance: f64,
@@ -75,7 +75,7 @@ pub async fn rebalancing_simulation(
     )
     .await?;
 
-    let withdraws_and_deposits = WithdrawsAndDeposits::get_details_for_epoch_range(
+    let withdraws_and_deposits_stakes = WithdrawsAndDeposits::get_details_for_epoch_range(
         db_connection,
         simulation_start_epoch.into(),
         simulation_end_epoch.into(),
@@ -89,7 +89,7 @@ pub async fn rebalancing_simulation(
     )
     .await?;
 
-    let epoch_map = build_epoch_map(withdraws_and_deposits, active_stake);
+    let epoch_map = build_epoch_map(withdraws_and_deposits_stakes, active_stake);
     let mut entries_by_validator: HashMap<String, Vec<ValidatorHistoryEntry>> = HashMap::new();
     for entry in all_entries {
         entries_by_validator
@@ -268,24 +268,27 @@ async fn process_steward_cycle(
 
 /// Apply epoch-specific stake changes based on deposit/withdraw ratios
 fn apply_epoch_stake_changes(
-    validator_balances: &mut HashMap<String, u64>,
-    epoch_map: &HashMap<u64, Vec<EpochData>>,
-    current_epoch: u16,
+    validator_balances: &mut HashMap<String, u64>, // This has validator and it's corresponding balances for that epoch
+    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>, // map of epochs to vec of withdraw/deposit stake of that epoch
+    current_epoch: u16,                                           // current epoch
 ) -> Result<(), CliError> {
     let current_epoch_u64 = current_epoch as u64;
 
+    // Get the epoch data for current epoch
     if let Some(epoch_data_vec) = epoch_map.get(&current_epoch_u64) {
         let num_records = epoch_data_vec.len();
 
         if num_records == 0 {
-            return Ok(());
+            return Ok(()); // No data for this epoch so we will skip this
         }
 
+        // Get all validator vote accounts as a vector
         let validator_accounts: Vec<String> = validator_balances.keys().cloned().collect();
         if validator_accounts.is_empty() {
-            return Ok(());
+            return Ok(()); // No validators to adjust so we will skip this
         }
 
+        // Randomly select validators (with replacement if needed)
         let mut rng = rng();
         let selected_validators: Vec<String> = (0..num_records)
             .map(|_| {
@@ -303,19 +306,21 @@ fn apply_epoch_stake_changes(
             validator_accounts.len()
         );
 
+        // Apply stake changes for each selected validator and corresponding epoch data
         for (validator_account, epoch_data) in selected_validators.iter().zip(epoch_data_vec.iter())
         {
             if let Some(current_balance) = validator_balances.get_mut(validator_account) {
                 let current_balance_f64 = *current_balance as f64;
 
+                // Skip if active balance is zero to avoid division by zero
                 if epoch_data.active_balance == 0.0 {
                     continue;
                 }
 
                 // Find net stake change for a given validator this epoch
                 let net_stake_change = epoch_data.deposit_stake - epoch_data.withdraw_stake;
-                // Calculate the ratio of that stake to the active stake on the jitoSOL pool 
-                // during that epoch. This is used to normalize the depoist stake or withdraw 
+                // Calculate the ratio of that stake to the active stake on the jitoSOL pool
+                // during that epoch. This is used to normalize the depoist stake or withdraw
                 // stake amounts to the pool values in this back test
                 let stake_change_ratio = net_stake_change / epoch_data.active_balance;
 
@@ -323,6 +328,7 @@ fn apply_epoch_stake_changes(
                 let stake_adjustment = current_balance_f64 * stake_change_ratio;
                 let new_balance = current_balance_f64 + stake_adjustment;
 
+                // Ensure balance doesn't go negative
                 let final_balance = new_balance.max(0.0) as u64;
 
                 *current_balance = final_balance;
@@ -357,7 +363,7 @@ async fn process_epoch_cycle(
     instant_unstake_cap_bps: u32,
     number_of_validator_delegations: usize,
     validator_balances: &mut HashMap<String, u64>,
-    epoch_map: &HashMap<u64, Vec<EpochData>>,
+    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>,
     mut total_lamports_staked: u64,
 ) -> Result<u64, CliError> {
     // Apply epoch-specific stake changes first (before any other processing)
@@ -757,8 +763,8 @@ fn calculate_instant_unstake(
 pub fn build_epoch_map(
     withdraws_and_deposits: Vec<WithdrawsAndDeposits>,
     active_stake: Vec<ActiveStakeJitoSol>,
-) -> HashMap<u64, Vec<EpochData>> {
-    let mut epoch_map: HashMap<u64, Vec<EpochData>> = HashMap::new();
+) -> HashMap<u64, Vec<EpochWithdrawDepositStakeData>> {
+    let mut epoch_map: HashMap<u64, Vec<EpochWithdrawDepositStakeData>> = HashMap::new();
     let mut active_by_epoch: HashMap<u64, f64> = HashMap::new();
     for stake in active_stake {
         let balance = stake.balance.to_f64().unwrap_or(0.0);
@@ -771,7 +777,7 @@ pub fn build_epoch_map(
         epoch_map
             .entry(wd.epoch)
             .or_insert_with(Vec::new)
-            .push(EpochData {
+            .push(EpochWithdrawDepositStakeData {
                 withdraw_stake: wd.withdraw_stake.to_f64().unwrap_or(0.0),
                 deposit_stake: wd.deposit_stake.to_f64().unwrap_or(0.0),
                 active_balance,

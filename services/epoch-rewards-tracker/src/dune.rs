@@ -52,8 +52,8 @@ pub struct ExecutionStatus {
 
 pub const INACTIVE_STAKE_DUNE_QUERY: u64 = 5571499;
 pub const ACTIVE_STAKE_DUNE_QUERY: u64 = 5571504;
-pub const DEPOSIT_TRANSACTIONS_QUERY: u64 = 5759079;
-pub const WITHDRAW_TRANSACTIONS_QUERY: u64 = 5751846;
+pub const DEPOSIT_STAKE_TRANSACTIONS_QUERY: u64 = 5759079;
+pub const WITHDRAW_STAKE_TRANSACTIONS_QUERY: u64 = 5751846;
 
 pub async fn execute_dune_query(
     query_id: u64,

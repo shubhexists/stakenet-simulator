@@ -1,7 +1,7 @@
 use crate::{
     dune::{
-        DEPOSIT_TRANSACTIONS_QUERY, DepositsRow, WITHDRAW_TRANSACTIONS_QUERY, WithdrawRow,
-        execute_dune_query, fetch_dune_query, wait_for_query_execution,
+        DEPOSIT_STAKE_TRANSACTIONS_QUERY, DepositsRow, WITHDRAW_STAKE_TRANSACTIONS_QUERY,
+        WithdrawRow, execute_dune_query, fetch_dune_query, wait_for_query_execution,
     },
     errors::EpochRewardsTrackerError,
 };
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use tracing::info;
 
 pub async fn withdraw_and_deposits(db: &Pool<Postgres>) -> Result<(), EpochRewardsTrackerError> {
-    let execute_client_deposit = execute_dune_query(DEPOSIT_TRANSACTIONS_QUERY)
+    let execute_client_deposit = execute_dune_query(DEPOSIT_STAKE_TRANSACTIONS_QUERY)
         .await
         .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
     wait_for_query_execution(&execute_client_deposit.execution_id).await?;
@@ -21,7 +21,7 @@ pub async fn withdraw_and_deposits(db: &Pool<Postgres>) -> Result<(), EpochRewar
             .await
             .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
     info!("Deposit Rows: {}", deposit_rows.len());
-    let execute_client_withdraw = execute_dune_query(WITHDRAW_TRANSACTIONS_QUERY)
+    let execute_client_withdraw = execute_dune_query(WITHDRAW_STAKE_TRANSACTIONS_QUERY)
         .await
         .map_err(|_| EpochRewardsTrackerError::DuneApiError)?;
     wait_for_query_execution(&execute_client_withdraw.execution_id).await?;

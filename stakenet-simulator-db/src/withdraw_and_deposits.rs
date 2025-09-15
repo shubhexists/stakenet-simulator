@@ -14,7 +14,7 @@ pub struct WithdrawsAndDeposits {
 impl WithdrawsAndDeposits {
     const NUM_FIELDS: u8 = 5;
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;
-    const INSERT_QUERY: &str = "INSERT INTO withdraws_and_deposits \
+    const INSERT_QUERY: &str = "INSERT INTO withdraw_and_deposit_stakes \
         (id, epoch, vote_pubkey, withdraw_stake, deposit_stake) VALUES ";
 
     pub fn new(
@@ -84,7 +84,7 @@ impl WithdrawsAndDeposits {
     ) -> Result<Vec<Self>, Error> {
         let query = r#"
             SELECT id, epoch, vote_pubkey, withdraw_stake, deposit_stake
-            FROM withdraws_and_deposits
+            FROM withdraw_and_deposit_stakes
             WHERE epoch BETWEEN $1 AND $2
             ORDER BY epoch, vote_pubkey
         "#;
