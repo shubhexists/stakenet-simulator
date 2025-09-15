@@ -312,9 +312,14 @@ fn apply_epoch_stake_changes(
                     continue;
                 }
 
+                // Find net stake change for a given validator this epoch
                 let net_stake_change = epoch_data.deposit_stake - epoch_data.withdraw_stake;
+                // Calculate the ratio of that stake to the active stake on the jitoSOL pool 
+                // during that epoch. This is used to normalize the depoist stake or withdraw 
+                // stake amounts to the pool values in this back test
                 let stake_change_ratio = net_stake_change / epoch_data.active_balance;
 
+                // The amount of stake that should be adjusted for the validator
                 let stake_adjustment = current_balance_f64 * stake_change_ratio;
                 let new_balance = current_balance_f64 + stake_adjustment;
 
