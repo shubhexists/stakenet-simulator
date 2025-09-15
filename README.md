@@ -9,12 +9,13 @@ of the steward protocol with the new parameters provided in the CLI.
 ## Table of Contents
 - [Stakenet Cli](https://github.com/exo-tech-xyz/stakenet-simulator?tab=readme-ov-file#stakenet-cli)
 - [Epoch Rewards Tracker](https://github.com/exo-tech-xyz/stakenet-simulator?tab=readme-ov-file#epoch-rewards-tracker)
+- [Setup Database](https://github.com/exo-tech-xyz/stakenet-simulator?tab=readme-ov-file#setup-database)
 
 ## stakenet-cli
 Runs a backtesting simulation with configurable steward parameters.
 
 ```bash
-steward-backtest-cli backtest [OPTIONS]
+steward-simulator-cli backtest [OPTIONS]
 ```
 
 Set `env` variables - 
@@ -22,6 +23,7 @@ Set `env` variables -
 - DB_CONNECTION_URL
 - VALIDATOR_HISTORY_PROGRAM_ID (`HistoryJTGbKQD2mRgLZ3XhqHnN811Qpez8X9kCcGHoa`)
 - EPOCH_CHECK_CYCLE_SEC
+- DUNE_API_KEY
 
 ## Configuration Parameters
 
@@ -157,3 +159,33 @@ Processes inactive stake data from the database.
 epoch-rewards-tracker fetch-inactive-stake
 ```
 **Purpose**: Analyzes inactive or deactivating stake positions. This command operates on existing database data.
+
+## Setup Database
+Follow the following steps to setup the local database initally - 
+1) Install `supabase` cli and in the root directory run 
+```
+supabase start
+```
+2) Temporarily download inflation data from [Google Sheets](https://docs.google.com/spreadsheets/d/1NNZKSjQDkIK4U8povotsUMEUJOuWzGXKzZDPohkWE0M) as `csv` and store it in the root dir as `data.csv`.
+3) Build the cargo project and run the following commands to populate the table - 
+```bash
+export RPC_URL={YOUR_RPC_URL}
+export DB_CONNECTION_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+export DUNE_API_KEY={YOUR_DUNE_API_KEY}
+
+./target/release/epoch_rewards
+
+./target/release/epoch-rewards-tracker fetch-active-stake
+
+./target/release/epoch-rewards-tracker fetch-inactive-stake
+
+./target/release/epoch-rewards-tracker withdraw-and-deposits
+
+./target/release/epoch-rewards-tracker fetch-cluster-history
+
+./target/release/epoch-rewards-tracker fetch-validator-history
+
+./target/release/epoch-rewards-tracker get-stake-accounts
+
+./target/release/epoch-rewards-tracker get-inflation-rewards
+```

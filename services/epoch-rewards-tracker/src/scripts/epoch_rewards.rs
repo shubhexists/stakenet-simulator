@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("epoch_rewards binary started...");
 
     info!("Reading CSV file...");
-    let mut rdr = Reader::from_path("/data.csv")?;
+    let mut rdr = Reader::from_path("./data.csv")?;
     let mut rows: Vec<EpochReward> = Vec::new();
     for result in rdr.deserialize() {
         rows.push(result?);
