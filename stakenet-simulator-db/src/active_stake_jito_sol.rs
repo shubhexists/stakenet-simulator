@@ -92,4 +92,24 @@ impl ActiveStakeJitoSol {
             sqlx::query_as(query).fetch_all(db_connection).await?;
         Ok(result)
     }
+
+    pub async fn get_active_stakes_for_epoch_range(
+        db_connection: &Pool<Postgres>,
+        start_epoch: i64,
+        end_epoch: i64,
+    ) -> Result<Vec<ActiveStakeJitoSol>, Error> {
+        let query = r#"
+            SELECT *
+            FROM active_stake_jito_sol
+            WHERE epoch BETWEEN $1 AND $2;
+        "#;
+
+        let result: Vec<ActiveStakeJitoSol> = sqlx::query_as(query)
+            .bind(start_epoch)
+            .bind(end_epoch)
+            .fetch_all(db_connection)
+            .await?;
+
+        Ok(result)
+    }
 }

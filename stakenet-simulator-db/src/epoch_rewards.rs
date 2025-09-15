@@ -156,19 +156,26 @@ impl EpochRewards {
         let inflation_for_stakers = self.total_inflation_rewards
             * (MAX_BPS - u64::from(self.inflation_commission_bps))
             / MAX_BPS;
-        let inflation_rewards = u128::from(inflation_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
+        let inflation_rewards = u128::from(inflation_for_stakers)
+            * u128::from(current_active_stake)
+            / u128::from(self.active_stake);
 
         let mev_for_stakers =
             self.total_mev_rewards * (MAX_BPS - u64::from(self.mev_commission_bps)) / MAX_BPS;
-        let mev_rewards = u128::from(mev_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
+        let mev_rewards = u128::from(mev_for_stakers) * u128::from(current_active_stake)
+            / u128::from(self.active_stake);
 
         let priority_fee_for_stakers = self.total_priority_fee_rewards
             * (MAX_BPS - u64::from(self.priority_fee_commission_bps))
             / MAX_BPS;
-        let priority_fee_rewards =
-            u128::from(priority_fee_for_stakers) * u128::from(current_active_stake) / u128::from(self.active_stake);
+        let priority_fee_rewards = u128::from(priority_fee_for_stakers)
+            * u128::from(current_active_stake)
+            / u128::from(self.active_stake);
 
-        current_active_stake + inflation_rewards as u64 + mev_rewards as u64 + priority_fee_rewards as u64
+        current_active_stake
+            + inflation_rewards as u64
+            + mev_rewards as u64
+            + priority_fee_rewards as u64
     }
 }
 

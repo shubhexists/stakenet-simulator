@@ -1,8 +1,7 @@
-use std::{cmp::Ordering, str::FromStr};
-
 use crate::{big_decimal_u64::BigDecimalU64, validator_history_entry::ValidatorHistoryEntry};
 use solana_sdk::pubkey::Pubkey;
 use sqlx::{Error as SqlxError, Pool, Postgres, QueryBuilder, prelude::FromRow, types::BigDecimal};
+use std::{cmp::Ordering, str::FromStr};
 use validator_history::{CircBuf, ValidatorHistory as JitoValidatorHistory};
 
 #[derive(FromRow, Clone)]

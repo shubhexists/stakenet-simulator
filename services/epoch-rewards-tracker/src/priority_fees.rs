@@ -1,10 +1,10 @@
-use std::collections::HashSet;
 use anchor_lang::prelude::{EpochSchedule, SlotHistory};
 use futures::future::join_all;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::reward_type::RewardType;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::epoch_priority_fees::EpochPriorityFees;
+use std::collections::HashSet;
 use tracing::{error, info};
 
 use crate::{

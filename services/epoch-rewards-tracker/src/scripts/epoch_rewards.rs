@@ -3,8 +3,8 @@ use futures::future::join_all;
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use stakenet_simulator_db::epoch_rewards::EpochRewards;
-use std::{collections::HashSet, error::Error};
 use std::sync::Arc;
+use std::{collections::HashSet, error::Error};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -108,7 +108,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             total_inflation_rewards: reward.total_inflation_rewards as u64,
                             mev_commission_bps: v.mev_commission_bps.unwrap_or(0),
                             total_mev_rewards: v.mev_rewards.unwrap_or(0),
-                            priority_fee_commission_bps: v.priority_fee_commission_bps.unwrap_or(10_000),
+                            priority_fee_commission_bps: v
+                                .priority_fee_commission_bps
+                                .unwrap_or(10_000),
                             total_priority_fee_rewards: reward.block_rewards,
                             active_stake: v.active_stake,
                         });

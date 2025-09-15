@@ -77,18 +77,21 @@ impl WithdrawsAndDeposits {
         Ok(())
     }
 
-    pub async fn get_details_for_epoch(
+    pub async fn get_details_for_epoch_range(
         db_connection: &Pool<Postgres>,
-        epoch: u64,
+        start_epoch: i64,
+        end_epoch: i64,
     ) -> Result<Vec<Self>, Error> {
-        let query = "
+        let query = r#"
             SELECT id, epoch, vote_pubkey, withdraw_stake, deposit_stake
             FROM withdraws_and_deposits
-            WHERE epoch = $1
-        ";
+            WHERE epoch BETWEEN $1 AND $2
+            ORDER BY epoch, vote_pubkey
+        "#;
 
         sqlx::query_as::<_, Self>(query)
-            .bind(BigDecimal::from(epoch))
+            .bind(start_epoch)
+            .bind(end_epoch)
             .fetch_all(db_connection)
             .await
     }
