@@ -15,10 +15,7 @@ impl ActiveStakeJitoSol {
     const INSERT_QUERY: &str = "INSERT INTO active_stake_jito_sol (epoch,balance) VALUES ";
 
     pub fn new(epoch: u64, balance: BigDecimal) -> Self {
-        Self {
-            epoch,
-            balance,
-        }
+        Self { epoch, balance }
     }
 
     pub async fn bulk_insert(
@@ -85,5 +82,34 @@ impl ActiveStakeJitoSol {
             Some((balance, count)) => Ok(EpochBalanceResponse { balance, count }),
             None => Err(Error::RowNotFound),
         }
+    }
+
+    pub async fn get_all_active_stakes(
+        db_connection: &Pool<Postgres>,
+    ) -> Result<Vec<ActiveStakeJitoSol>, Error> {
+        let query = "SELECT * FROM active_stake_jito_sol";
+        let result: Vec<ActiveStakeJitoSol> =
+            sqlx::query_as(query).fetch_all(db_connection).await?;
+        Ok(result)
+    }
+
+    pub async fn get_active_stakes_for_epoch_range(
+        db_connection: &Pool<Postgres>,
+        start_epoch: i64,
+        end_epoch: i64,
+    ) -> Result<Vec<ActiveStakeJitoSol>, Error> {
+        let query = r#"
+            SELECT *
+            FROM active_stake_jito_sol
+            WHERE epoch BETWEEN $1 AND $2;
+        "#;
+
+        let result: Vec<ActiveStakeJitoSol> = sqlx::query_as(query)
+            .bind(start_epoch)
+            .bind(end_epoch)
+            .fetch_all(db_connection)
+            .await?;
+
+        Ok(result)
     }
 }

@@ -90,7 +90,7 @@ pub async fn gather_inflation_rewards(
     // We have to limit the number of concurrent requests to prevent RPC rate limits
     let semaphore = Arc::new(Semaphore::new(10));
     let db_connection = Arc::new(db_connection.clone());
-    let rpc_client = Arc::new(rpc_client.clone());
+    let rpc_client = Arc::new(rpc_client);
 
     let tasks: Vec<_> = stake_account_keys
         .chunks(30)
@@ -117,10 +117,7 @@ pub async fn gather_inflation_rewards(
 
     info!("Starting parallel processing of {} tasks", tasks.len());
 
-    let results: Vec<_> = stream::iter(tasks)
-        .buffer_unordered(50)
-        .collect()
-        .await;
+    let results: Vec<_> = stream::iter(tasks).buffer_unordered(50).collect().await;
 
     for (i, result) in results.iter().enumerate() {
         if let Err(e) = result {

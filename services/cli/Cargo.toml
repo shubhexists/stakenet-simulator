@@ -31,3 +31,4 @@ stakenet-simulator-db = { workspace = true }
 validator-history = { workspace = true }
 jito-steward = { workspace = true }
 type-layout = "0.2"
+rand = "0.9.2"

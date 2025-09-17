@@ -15,10 +15,7 @@ impl InactiveStakeJitoSol {
     const INSERT_QUERY: &str = "INSERT INTO inactive_stake_jito_sol (epoch,balance) VALUES ";
 
     pub fn new(epoch: u64, balance: BigDecimal) -> Self {
-        Self {
-            epoch,
-            balance,
-        }
+        Self { epoch, balance }
     }
 
     pub async fn bulk_insert(

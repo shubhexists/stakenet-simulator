@@ -25,6 +25,7 @@ mod rpc_utils;
 mod stake_accounts;
 mod steward_utils;
 mod validator_history_utils;
+mod withdraw_and_deposits;
 
 #[derive(Parser, Debug)]
 pub struct GlobalArgs {
@@ -60,6 +61,7 @@ pub enum Commands {
     FetchClusterHistory,
     GetStakeAccounts,
     GetInflationRewards,
+    WithdrawAndDeposits,
     FetchActiveStake,
     FetchInactiveStake,
     GetPriorityFeeDataForEpoch { epoch: u64 },
@@ -131,6 +133,9 @@ async fn main() -> Result<(), EpochRewardsTrackerError> {
         Commands::FetchActiveStake => fetch_active_stake::fetch_active_stake(&db_conn_pool).await?,
         Commands::FetchInactiveStake => {
             fetch_inactive_stake::fetch_inactive_stake(&db_conn_pool).await?
+        }
+        Commands::WithdrawAndDeposits => {
+            withdraw_and_deposits::withdraw_and_deposits(&db_conn_pool).await?
         }
     }
 

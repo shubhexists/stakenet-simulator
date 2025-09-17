@@ -13,6 +13,7 @@ mod macros;
 pub mod stake_accounts;
 pub mod validator_history;
 pub mod validator_history_entry;
+pub mod withdraw_and_deposits;
 
 #[derive(Debug)]
 pub struct EpochBalanceResponse {

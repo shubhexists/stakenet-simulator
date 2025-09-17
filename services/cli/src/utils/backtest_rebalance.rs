@@ -5,12 +5,16 @@ use jito_steward::{
     constants::TVC_ACTIVATION_EPOCH,
     score::{instant_unstake_validator, validator_score},
 };
+use num_traits::ToPrimitive;
+use rand::prelude::IndexedRandom;
+use rand::rng;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use sqlx::{Pool, Postgres};
 use stakenet_simulator_db::{
-    cluster_history::ClusterHistory, cluster_history_entry::ClusterHistoryEntry,
-    epoch_rewards::EpochRewards, validator_history::ValidatorHistory,
-    validator_history_entry::ValidatorHistoryEntry,
+    active_stake_jito_sol::ActiveStakeJitoSol, cluster_history::ClusterHistory,
+    cluster_history_entry::ClusterHistoryEntry, epoch_rewards::EpochRewards,
+    validator_history::ValidatorHistory, validator_history_entry::ValidatorHistoryEntry,
+    withdraw_and_deposits::WithdrawsAndDeposits,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +25,13 @@ use validator_history::ClusterHistory as JitoClusterHistory;
 pub struct RebalancingCycle {
     pub starting_total_lamports: u64,
     pub ending_total_lamports: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EpochWithdrawDepositStakeData {
+    pub withdraw_stake: f64,
+    pub deposit_stake: f64,
+    pub active_balance: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +74,22 @@ pub async fn rebalancing_simulation(
         simulation_end_epoch.into(),
     )
     .await?;
+
+    let withdraws_and_deposits_stakes = WithdrawsAndDeposits::get_details_for_epoch_range(
+        db_connection,
+        simulation_start_epoch.into(),
+        simulation_end_epoch.into(),
+    )
+    .await?;
+
+    let active_stake = ActiveStakeJitoSol::get_active_stakes_for_epoch_range(
+        db_connection,
+        simulation_start_epoch.into(),
+        simulation_end_epoch.into(),
+    )
+    .await?;
+
+    let epoch_map = build_epoch_map(withdraws_and_deposits_stakes, active_stake);
     let mut entries_by_validator: HashMap<String, Vec<ValidatorHistoryEntry>> = HashMap::new();
     for entry in all_entries {
         entries_by_validator
@@ -145,6 +172,7 @@ pub async fn rebalancing_simulation(
                 instant_unstake_cap_bps,
                 number_of_validator_delegations,
                 &mut validator_balances,
+                &epoch_map,
                 total_lamports_staked,
             )
             .await?;
@@ -238,6 +266,89 @@ async fn process_steward_cycle(
     Ok((top_validators, new_cycle_starting_lamports))
 }
 
+/// Apply epoch-specific stake changes based on deposit/withdraw ratios
+fn apply_epoch_stake_changes(
+    validator_balances: &mut HashMap<String, u64>, // This has validator and it's corresponding balances for that epoch
+    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>, // map of epochs to vec of withdraw/deposit stake of that epoch
+    current_epoch: u16,                                           // current epoch
+) -> Result<(), CliError> {
+    let current_epoch_u64 = current_epoch as u64;
+
+    // Get the epoch data for current epoch
+    if let Some(epoch_data_vec) = epoch_map.get(&current_epoch_u64) {
+        let num_records = epoch_data_vec.len();
+
+        if num_records == 0 {
+            return Ok(()); // No data for this epoch so we will skip this
+        }
+
+        // Get all validator vote accounts as a vector
+        let validator_accounts: Vec<String> = validator_balances.keys().cloned().collect();
+        if validator_accounts.is_empty() {
+            return Ok(()); // No validators to adjust so we will skip this
+        }
+
+        // Randomly select validators (with replacement if needed)
+        let mut rng = rng();
+        let selected_validators: Vec<String> = (0..num_records)
+            .map(|_| {
+                validator_accounts
+                    .choose(&mut rng)
+                    .unwrap_or(&validator_accounts[0])
+                    .clone()
+            })
+            .collect();
+
+        info!(
+            "Epoch {}: Applying stake changes to {} randomly selected validators from {} total validators",
+            current_epoch,
+            num_records,
+            validator_accounts.len()
+        );
+
+        // Apply stake changes for each selected validator and corresponding epoch data
+        for (validator_account, epoch_data) in selected_validators.iter().zip(epoch_data_vec.iter())
+        {
+            if let Some(current_balance) = validator_balances.get_mut(validator_account) {
+                let current_balance_f64 = *current_balance as f64;
+
+                // Skip if active balance is zero to avoid division by zero
+                if epoch_data.active_balance == 0.0 {
+                    continue;
+                }
+
+                // Find net stake change for a given validator this epoch
+                let net_stake_change = epoch_data.deposit_stake - epoch_data.withdraw_stake;
+                // Calculate the ratio of that stake to the active stake on the jitoSOL pool
+                // during that epoch. This is used to normalize the depoist stake or withdraw
+                // stake amounts to the pool values in this back test
+                let stake_change_ratio = net_stake_change / epoch_data.active_balance;
+
+                // The amount of stake that should be adjusted for the validator
+                let stake_adjustment = current_balance_f64 * stake_change_ratio;
+                let new_balance = current_balance_f64 + stake_adjustment;
+
+                // Ensure balance doesn't go negative
+                let final_balance = new_balance.max(0.0) as u64;
+
+                *current_balance = final_balance;
+
+                info!(
+                    "Epoch {}: Adjusted validator {} balance by {:.6} SOL ({:.2}% change) - Balance: {:.6} -> {:.6} SOL",
+                    current_epoch,
+                    validator_account,
+                    stake_adjustment / LAMPORTS_PER_SOL as f64,
+                    stake_change_ratio * 100.0,
+                    current_balance_f64 / LAMPORTS_PER_SOL as f64,
+                    final_balance as f64 / LAMPORTS_PER_SOL as f64
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Processes a single epoch within the current steward cycle, handling instant unstaking if
 /// necessary, and simulating epoch returns.
 async fn process_epoch_cycle(
@@ -252,8 +363,13 @@ async fn process_epoch_cycle(
     instant_unstake_cap_bps: u32,
     number_of_validator_delegations: usize,
     validator_balances: &mut HashMap<String, u64>,
+    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>,
     mut total_lamports_staked: u64,
 ) -> Result<u64, CliError> {
+    // Apply epoch-specific stake changes first (before any other processing)
+    apply_epoch_stake_changes(validator_balances, epoch_map, current_epoch)?;
+    total_lamports_staked = validator_balances.values().sum::<u64>();
+
     if !is_rebalancing_epoch {
         let current_validator_list: Vec<String> = top_validators
             .iter()
@@ -642,4 +758,31 @@ fn calculate_instant_unstake(
             Ok(false)
         }
     }
+}
+
+pub fn build_epoch_map(
+    withdraws_and_deposits: Vec<WithdrawsAndDeposits>,
+    active_stake: Vec<ActiveStakeJitoSol>,
+) -> HashMap<u64, Vec<EpochWithdrawDepositStakeData>> {
+    let mut epoch_map: HashMap<u64, Vec<EpochWithdrawDepositStakeData>> = HashMap::new();
+    let mut active_by_epoch: HashMap<u64, f64> = HashMap::new();
+    for stake in active_stake {
+        let balance = stake.balance.to_f64().unwrap_or(0.0);
+        *active_by_epoch.entry(stake.epoch).or_insert(0.0) += balance;
+    }
+
+    for wd in withdraws_and_deposits {
+        let active_balance = active_by_epoch.get(&wd.epoch).cloned().unwrap_or(0.0);
+
+        epoch_map
+            .entry(wd.epoch)
+            .or_insert_with(Vec::new)
+            .push(EpochWithdrawDepositStakeData {
+                withdraw_stake: wd.withdraw_stake.to_f64().unwrap_or(0.0),
+                deposit_stake: wd.deposit_stake.to_f64().unwrap_or(0.0),
+                active_balance,
+            });
+    }
+
+    epoch_map
 }
