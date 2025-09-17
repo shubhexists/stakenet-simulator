@@ -1,4 +1,4 @@
-use crate::error::CliError;
+use crate::{error::CliError, utils::ValidatorStakeState};
 use futures::future::try_join_all;
 use jito_steward::{
     Config,
@@ -16,7 +16,7 @@ use stakenet_simulator_db::{
     validator_history::ValidatorHistory, validator_history_entry::ValidatorHistoryEntry,
     withdraw_and_deposits::WithdrawsAndDeposits,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{error, info};
 use validator_history::ClusterHistory as JitoClusterHistory;
@@ -53,8 +53,8 @@ pub async fn rebalancing_simulation(
     let mut rebalancing_cycles = Vec::new();
     let mut current_cycle_start = simulation_start_epoch;
 
-    // Tracks each validator's actual balance epoch to epoch
-    let mut validator_balances: HashMap<String, u64> = HashMap::new();
+    // Tracks each validator's stake states (active, activating, deactivating)
+    let mut validator_stake_states: HashMap<String, ValidatorStakeState> = HashMap::new();
     // Tracks the validator's score for the current steward cycle
     let mut validator_scores: HashMap<String, f64> = HashMap::new();
 
@@ -113,6 +113,11 @@ pub async fn rebalancing_simulation(
     for current_epoch in simulation_start_epoch..simulation_end_epoch {
         info!("Processing epoch {}", current_epoch);
 
+        // Process epoch transitions first (activating->active, deactivating->removed)
+        for stake_state in validator_stake_states.values_mut() {
+            stake_state.process_epoch_transition();
+        }
+
         let is_rebalancing_epoch =
             (current_epoch - simulation_start_epoch) % steward_cycle_rate == 0;
 
@@ -151,7 +156,7 @@ pub async fn rebalancing_simulation(
                 number_of_validator_delegations,
                 &mut current_cycle_start,
                 &mut rebalancing_cycles,
-                &mut validator_balances,
+                &mut validator_stake_states,
                 &mut validator_scores,
                 &mut total_lamports_staked,
                 cycle_starting_lamports,
@@ -170,8 +175,7 @@ pub async fn rebalancing_simulation(
                 current_epoch,
                 is_rebalancing_epoch,
                 instant_unstake_cap_bps,
-                number_of_validator_delegations,
-                &mut validator_balances,
+                &mut validator_stake_states,
                 &epoch_map,
                 total_lamports_staked,
             )
@@ -179,8 +183,11 @@ pub async fn rebalancing_simulation(
         }
     }
 
-    if !validator_balances.is_empty() {
-        let final_cycle_ending_lamports = validator_balances.values().sum::<u64>();
+    if !validator_stake_states.is_empty() {
+        let final_cycle_ending_lamports = validator_stake_states
+            .values()
+            .map(|state| state.total())
+            .sum::<u64>();
         let final_cycle_result = RebalancingCycle {
             starting_total_lamports: cycle_starting_lamports,
             ending_total_lamports: final_cycle_ending_lamports,
@@ -205,7 +212,7 @@ async fn process_steward_cycle(
     number_of_validator_delegations: usize,
     current_cycle_start: &mut u16,
     rebalancing_cycles: &mut Vec<RebalancingCycle>,
-    validator_balances: &mut HashMap<String, u64>,
+    validator_stake_states: &mut HashMap<String, ValidatorStakeState>,
     validator_scores: &mut HashMap<String, f64>,
     total_lamports_staked: &mut u64,
     cycle_starting_lamports: u64,
@@ -216,7 +223,10 @@ async fn process_steward_cycle(
     );
 
     if *current_cycle_start > simulation_start_epoch {
-        let cycle_ending_lamports = validator_balances.values().sum::<u64>();
+        let cycle_ending_lamports = validator_stake_states
+            .values()
+            .map(|state| state.total())
+            .sum::<u64>();
         let cycle_result = RebalancingCycle {
             starting_total_lamports: cycle_starting_lamports,
             ending_total_lamports: cycle_ending_lamports,
@@ -243,22 +253,95 @@ async fn process_steward_cycle(
     )
     .await?;
 
-    let stake_per_validator: u64 = *total_lamports_staked / top_validators.len() as u64;
+    // Calculate current total stake across all validators
+    let current_total_stake = validator_stake_states
+        .values()
+        .map(|state| state.total())
+        .sum::<u64>();
 
-    validator_balances.clear();
-    validator_scores.clear();
-    for validator in &top_validators {
-        validator_balances.insert(validator.vote_account.clone(), stake_per_validator);
-        validator_scores.insert(validator.vote_account.clone(), validator.score);
+    // Handle rebalancing: deactivate stake from validators not in new top list
+    let new_validator_set: HashSet<String> = top_validators
+        .iter()
+        .map(|v| v.vote_account.clone())
+        .collect();
+
+    let validators_to_remove: Vec<String> = validator_stake_states
+        .keys()
+        .filter(|vote_account| !new_validator_set.contains(*vote_account))
+        .cloned()
+        .collect();
+
+    // Deactivate stake from validators not in the new set
+    for vote_account in validators_to_remove {
+        if let Some(mut stake_state) = validator_stake_states.remove(&vote_account) {
+            // All stake becomes deactivating (will be removed next epoch)
+            let total_stake = stake_state.total();
+
+            // Put back the validator with all stake as deactivating
+            stake_state.deactivating = total_stake;
+            stake_state.active = 0;
+            stake_state.activating = 0;
+            validator_stake_states.insert(vote_account, stake_state);
+
+            info!(
+                "Deactivating {:.3} SOL from removed validator",
+                total_stake as f64 / LAMPORTS_PER_SOL as f64
+            );
+        }
     }
 
-    let new_cycle_starting_lamports = *total_lamports_staked;
+    // Use current total or target total, whichever is appropriate
+    let target_total = if current_total_stake > 0 {
+        current_total_stake
+    } else {
+        *total_lamports_staked
+    };
+
+    let stake_per_validator: u64 = target_total / top_validators.len() as u64;
+
+    // Clear scores and set up new validator set
+    validator_scores.clear();
+    for validator in &top_validators {
+        validator_scores.insert(validator.vote_account.clone(), validator.score);
+
+        let current_state = validator_stake_states
+            .entry(validator.vote_account.clone())
+            .or_insert_with(ValidatorStakeState::default);
+
+        let current_total = current_state.total();
+
+        if current_total < stake_per_validator {
+            // Need to add activating stake
+            let deficit = stake_per_validator - current_total;
+            current_state.add_activating_stake(deficit);
+            info!(
+                "Adding {:.3} SOL activating stake to validator {} (current: {:.3} SOL, target: {:.3} SOL)",
+                deficit as f64 / LAMPORTS_PER_SOL as f64,
+                validator.vote_account,
+                current_total as f64 / LAMPORTS_PER_SOL as f64,
+                stake_per_validator as f64 / LAMPORTS_PER_SOL as f64
+            );
+        } else if current_total > stake_per_validator {
+            // Need to deactivate some stake
+            let excess = current_total - stake_per_validator;
+            current_state.add_deactivating_stake(excess)?;
+            info!(
+                "Deactivating {:.3} SOL from validator {} (current: {:.3} SOL, target: {:.3} SOL)",
+                excess as f64 / LAMPORTS_PER_SOL as f64,
+                validator.vote_account,
+                current_total as f64 / LAMPORTS_PER_SOL as f64,
+                stake_per_validator as f64 / LAMPORTS_PER_SOL as f64
+            );
+        }
+    }
+
+    let new_cycle_starting_lamports = target_total;
 
     info!(
-        "Initialized {} validators with {:.3} SOL each, total: {:.3} SOL",
+        "Rebalanced to {} validators with target {:.3} SOL each, total: {:.3} SOL",
         top_validators.len(),
         stake_per_validator as f64 / LAMPORTS_PER_SOL as f64,
-        *total_lamports_staked as f64 / LAMPORTS_PER_SOL as f64
+        target_total as f64 / LAMPORTS_PER_SOL as f64
     );
 
     *current_cycle_start = current_cycle_end;
@@ -267,10 +350,11 @@ async fn process_steward_cycle(
 }
 
 /// Apply epoch-specific stake changes based on deposit/withdraw ratios
+/// Only applies to active stake since that's what's actually earning yield
 fn apply_epoch_stake_changes(
-    validator_balances: &mut HashMap<String, u64>, // This has validator and it's corresponding balances for that epoch
-    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>, // map of epochs to vec of withdraw/deposit stake of that epoch
-    current_epoch: u16,                                           // current epoch
+    validator_stake_states: &mut HashMap<String, ValidatorStakeState>,
+    epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>,
+    current_epoch: u16,
 ) -> Result<(), CliError> {
     let current_epoch_u64 = current_epoch as u64;
 
@@ -279,13 +363,13 @@ fn apply_epoch_stake_changes(
         let num_records = epoch_data_vec.len();
 
         if num_records == 0 {
-            return Ok(()); // No data for this epoch so we will skip this
+            return Ok(());
         }
 
         // Get all validator vote accounts as a vector
-        let validator_accounts: Vec<String> = validator_balances.keys().cloned().collect();
+        let validator_accounts: Vec<String> = validator_stake_states.keys().cloned().collect();
         if validator_accounts.is_empty() {
-            return Ok(()); // No validators to adjust so we will skip this
+            return Ok(());
         }
 
         // Randomly select validators (with replacement if needed)
@@ -309,10 +393,7 @@ fn apply_epoch_stake_changes(
         // Apply stake changes for each selected validator and corresponding epoch data
         for (validator_account, epoch_data) in selected_validators.iter().zip(epoch_data_vec.iter())
         {
-            if let Some(current_balance) = validator_balances.get_mut(validator_account) {
-                let current_balance_f64 = *current_balance as f64;
-
-                // Skip if active balance is zero to avoid division by zero
+            if let Some(stake_state) = validator_stake_states.get_mut(validator_account) {
                 if epoch_data.active_balance == 0.0 {
                     continue;
                 }
@@ -324,23 +405,19 @@ fn apply_epoch_stake_changes(
                 // stake amounts to the pool values in this back test
                 let stake_change_ratio = net_stake_change / epoch_data.active_balance;
 
-                // The amount of stake that should be adjusted for the validator
-                let stake_adjustment = current_balance_f64 * stake_change_ratio;
-                let new_balance = current_balance_f64 + stake_adjustment;
-
-                // Ensure balance doesn't go negative
-                let final_balance = new_balance.max(0.0) as u64;
-
-                *current_balance = final_balance;
+                // Apply the change only to active stake
+                let old_active = stake_state.active;
+                stake_state.apply_stake_change(stake_change_ratio)?;
+                let new_active = stake_state.active;
 
                 info!(
-                    "Epoch {}: Adjusted validator {} balance by {:.6} SOL ({:.2}% change) - Balance: {:.6} -> {:.6} SOL",
+                    "Epoch {}: Adjusted validator {} active stake by {:.6} SOL ({:.2}% change) - Active: {:.6} -> {:.6} SOL",
                     current_epoch,
                     validator_account,
-                    stake_adjustment / LAMPORTS_PER_SOL as f64,
+                    (new_active as i64 - old_active as i64) as f64 / LAMPORTS_PER_SOL as f64,
                     stake_change_ratio * 100.0,
-                    current_balance_f64 / LAMPORTS_PER_SOL as f64,
-                    final_balance as f64 / LAMPORTS_PER_SOL as f64
+                    old_active as f64 / LAMPORTS_PER_SOL as f64,
+                    new_active as f64 / LAMPORTS_PER_SOL as f64
                 );
             }
         }
@@ -361,14 +438,16 @@ async fn process_epoch_cycle(
     current_epoch: u16,
     is_rebalancing_epoch: bool,
     instant_unstake_cap_bps: u32,
-    number_of_validator_delegations: usize,
-    validator_balances: &mut HashMap<String, u64>,
+    validator_stake_states: &mut HashMap<String, ValidatorStakeState>,
     epoch_map: &HashMap<u64, Vec<EpochWithdrawDepositStakeData>>,
     mut total_lamports_staked: u64,
 ) -> Result<u64, CliError> {
-    // Apply epoch-specific stake changes first (before any other processing)
-    apply_epoch_stake_changes(validator_balances, epoch_map, current_epoch)?;
-    total_lamports_staked = validator_balances.values().sum::<u64>();
+    // Apply epoch-specific stake changes first (only to active stake)
+    apply_epoch_stake_changes(validator_stake_states, epoch_map, current_epoch)?;
+    total_lamports_staked = validator_stake_states
+        .values()
+        .map(|state| state.total())
+        .sum::<u64>();
 
     if !is_rebalancing_epoch {
         let current_validator_list: Vec<String> = top_validators
@@ -389,38 +468,51 @@ async fn process_epoch_cycle(
         if !validators_to_unstake.is_empty() {
             handle_instant_unstaking(
                 &validators_to_unstake,
-                validator_balances,
+                validator_stake_states,
                 top_validators,
                 instant_unstake_cap_bps,
-                number_of_validator_delegations,
                 &mut total_lamports_staked,
             )?;
         }
     }
 
-    let total_before_rewards = validator_balances.values().sum::<u64>();
-    simulate_epoch_returns(db_connection, validator_balances, current_epoch).await?;
-    let total_after_rewards = validator_balances.values().sum::<u64>();
+    let total_before_rewards = validator_stake_states
+        .values()
+        .map(|state| state.total())
+        .sum::<u64>();
+
+    // Only apply rewards to active stake
+    simulate_epoch_returns(db_connection, validator_stake_states, current_epoch).await?;
+
+    let total_after_rewards = validator_stake_states
+        .values()
+        .map(|state| state.total())
+        .sum::<u64>();
     total_lamports_staked = total_after_rewards;
 
+    let active_stake_total = validator_stake_states
+        .values()
+        .map(|state| state.active)
+        .sum::<u64>();
+
     info!(
-        "Epoch {} returns: {:.6} SOL -> {:.6} SOL (gain: {:.6} SOL)",
+        "Epoch {} returns: {:.6} SOL -> {:.6} SOL (gain: {:.6} SOL) - Active stake: {:.6} SOL",
         current_epoch,
         total_before_rewards as f64 / LAMPORTS_PER_SOL as f64,
         total_after_rewards as f64 / LAMPORTS_PER_SOL as f64,
-        (total_after_rewards - total_before_rewards) as f64 / LAMPORTS_PER_SOL as f64
+        (total_after_rewards - total_before_rewards) as f64 / LAMPORTS_PER_SOL as f64,
+        active_stake_total as f64 / LAMPORTS_PER_SOL as f64
     );
 
     Ok(total_lamports_staked)
 }
 
-/// Handles instant unstaking of validators
+/// Handles instant unstaking of validators by deactivating their stake
 fn handle_instant_unstaking(
     validators_to_unstake: &[String],
-    validator_balances: &mut HashMap<String, u64>,
+    validator_stake_states: &mut HashMap<String, ValidatorStakeState>,
     top_validators: &[ValidatorWithScore],
     instant_unstake_cap_bps: u32,
-    number_of_validator_delegations: usize,
     total_lamports_staked: &mut u64,
 ) -> Result<(), CliError> {
     let max_unstake_amount = (*total_lamports_staked as u128 * instant_unstake_cap_bps as u128
@@ -436,9 +528,9 @@ fn handle_instant_unstaking(
                 .map(|v| v.score)
                 .unwrap_or(0.0);
 
-            validator_balances
+            validator_stake_states
                 .get(vote_account)
-                .map(|&balance| (vote_account.clone(), score, balance))
+                .map(|state| (vote_account.clone(), score, state.total()))
         })
         .collect();
 
@@ -448,111 +540,84 @@ fn handle_instant_unstaking(
     let mut actual_validators_to_unstake = Vec::new();
     let mut total_unstaked_amount = 0u64;
 
-    for (vote_account, _score, balance) in validators_with_scores {
-        let potential_unstake = total_unstaked_amount + balance;
+    for (vote_account, _score, total_balance) in validators_with_scores {
+        let potential_unstake = total_unstaked_amount + total_balance;
 
         if potential_unstake <= max_unstake_amount {
             actual_validators_to_unstake.push(vote_account);
-            total_unstaked_amount += balance;
+            total_unstaked_amount += total_balance;
         } else {
             break;
         }
     }
 
+    // Deactivate stake from unstaked validators
     for validator in &actual_validators_to_unstake {
-        if let Some(current_balance) = validator_balances.get_mut(validator) {
-            total_unstaked_amount = total_unstaked_amount
-                .checked_sub(*current_balance)
-                .ok_or(CliError::ArithmeticError)?;
+        if let Some(stake_state) = validator_stake_states.get_mut(validator) {
+            let total_stake = stake_state.total();
 
-            let unstaked_amount = *current_balance;
-            *current_balance = 0;
+            // Move all stake to deactivating
+            stake_state.add_deactivating_stake(stake_state.active)?;
+            stake_state.deactivating += stake_state.activating;
+            stake_state.activating = 0;
 
-            total_unstaked_amount = total_unstaked_amount
-                .checked_add(unstaked_amount)
-                .ok_or(CliError::ArithmeticError)?;
+            info!(
+                "Instant unstaking: moved {:.3} SOL to deactivating for validator {}",
+                total_stake as f64 / LAMPORTS_PER_SOL as f64,
+                validator
+            );
         }
     }
 
     if total_unstaked_amount > 0 {
-        let remaining_validator_count = top_validators.len() - actual_validators_to_unstake.len();
+        let remaining_validators: Vec<_> = top_validators
+            .iter()
+            .filter(|v| !actual_validators_to_unstake.contains(&v.vote_account))
+            .collect();
 
-        if remaining_validator_count > 0 {
-            let new_target_balance_per_validator =
-                *total_lamports_staked / remaining_validator_count as u64;
+        if !remaining_validators.is_empty() {
+            let stake_per_remaining_validator =
+                total_unstaked_amount / remaining_validators.len() as u64;
 
-            let mut validators_by_score: Vec<_> = top_validators
-                .iter()
-                .filter(|v| !actual_validators_to_unstake.contains(&v.vote_account))
-                .collect();
-            validators_by_score.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            let mut remaining_to_distribute = total_unstaked_amount;
-
-            for validator in &validators_by_score {
-                if remaining_to_distribute == 0 {
-                    break;
-                }
-
-                if let Some(current_balance) = validator_balances.get_mut(&validator.vote_account) {
-                    let deficit = if *current_balance < new_target_balance_per_validator {
-                        new_target_balance_per_validator - *current_balance
-                    } else {
-                        0
-                    };
-
-                    let amount_to_add = deficit.min(remaining_to_distribute);
-                    if amount_to_add > 0 {
-                        *current_balance = current_balance
-                            .checked_add(amount_to_add)
-                            .ok_or(CliError::ArithmeticError)?;
-
-                        remaining_to_distribute = remaining_to_distribute
-                            .checked_sub(amount_to_add)
-                            .ok_or(CliError::ArithmeticError)?;
-                    }
+            // Add activating stake to remaining validators (will become active next epoch)
+            for validator in &remaining_validators {
+                if let Some(stake_state) = validator_stake_states.get_mut(&validator.vote_account) {
+                    stake_state.add_activating_stake(stake_per_remaining_validator);
                 }
             }
 
             info!(
-                "New target balance per validator: {:.3} SOL (was {:.3} SOL per validator)",
-                new_target_balance_per_validator as f64 / LAMPORTS_PER_SOL as f64,
-                (*total_lamports_staked / number_of_validator_delegations as u64) as f64
-                    / LAMPORTS_PER_SOL as f64
+                "Instant unstaking: redistributing {:.3} SOL as activating stake to {} remaining validators ({:.3} SOL each)",
+                total_unstaked_amount as f64 / LAMPORTS_PER_SOL as f64,
+                remaining_validators.len(),
+                stake_per_remaining_validator as f64 / LAMPORTS_PER_SOL as f64
             );
         }
-
-        info!(
-            "Unstaked total: {:.3} SOL from {} validators (max allowed: {:.3} SOL), redistributed to remaining {} validators",
-            total_unstaked_amount as f64 / LAMPORTS_PER_SOL as f64,
-            actual_validators_to_unstake.len(),
-            max_unstake_amount as f64 / LAMPORTS_PER_SOL as f64,
-            number_of_validator_delegations - actual_validators_to_unstake.len()
-        );
     }
 
     Ok(())
 }
 
+/// Simulate epoch returns - only active stake earns yield
 async fn simulate_epoch_returns(
     db_connection: &Pool<Postgres>,
-    validator_balances: &mut HashMap<String, u64>,
+    validator_stake_states: &mut HashMap<String, ValidatorStakeState>,
     current_epoch: u16,
 ) -> Result<(), CliError> {
-    let validator_list: Vec<String> = validator_balances.keys().cloned().collect();
+    let validator_list: Vec<String> = validator_stake_states.keys().cloned().collect();
 
     let rewards =
         EpochRewards::fetch_for_single_epoch(db_connection, &validator_list, current_epoch.into())
             .await?;
 
     for reward in rewards {
-        if let Some(current_balance) = validator_balances.get_mut(&reward.vote_pubkey) {
-            let new_balance = reward.stake_after_epoch(*current_balance);
-            *current_balance = new_balance;
+        if let Some(stake_state) = validator_stake_states.get_mut(&reward.vote_pubkey) {
+            // Only apply rewards to active stake
+            if stake_state.active > 0 {
+                let reward_amount =
+                    reward.stake_after_epoch(stake_state.active) - stake_state.active;
+                stake_state.apply_rewards(reward_amount);
+            }
         }
     }
 
