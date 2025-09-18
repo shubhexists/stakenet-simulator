@@ -196,7 +196,6 @@ impl RebalancingSimulator {
 
         for vote_account in validators_to_completely_remove {
             self.validator_stake_states.remove(&vote_account);
-            info!("Completely removed validator {} (zero stake)", vote_account);
         }
     }
 
@@ -247,6 +246,7 @@ impl RebalancingSimulator {
 
         if self.current_cycle_start > self.simulation_start_epoch {
             self.complete_cycle(cycle_starting_lamports);
+            self.validator_stake_states.clear();
         }
 
         self.top_validators = self
@@ -409,11 +409,6 @@ impl RebalancingSimulator {
                 stake_state.activating = 0;
                 self.validator_stake_states
                     .insert(vote_account, stake_state);
-
-                info!(
-                    "Deactivating {:.3} SOL from removed validator",
-                    total_stake as f64 / LAMPORTS_PER_SOL as f64
-                );
             }
         }
     }
