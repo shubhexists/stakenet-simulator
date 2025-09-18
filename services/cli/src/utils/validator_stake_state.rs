@@ -9,7 +9,7 @@ pub struct ValidatorStakeState {
 
 impl ValidatorStakeState {
     pub fn total(&self) -> u64 {
-        self.active + self.activating + self.deactivating
+        self.active + self.activating
     }
 
     pub fn add_activating_stake(&mut self, amount: u64) {

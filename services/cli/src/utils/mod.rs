@@ -1,5 +1,5 @@
-pub mod backtest_rebalance;
-pub use backtest_rebalance::*;
+pub mod rebalancing_simulator;
+pub use rebalancing_simulator::*;
 
 pub mod backtest_utilization;
 pub use backtest_utilization::*;
