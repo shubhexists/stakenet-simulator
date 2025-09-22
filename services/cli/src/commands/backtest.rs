@@ -103,7 +103,7 @@ pub async fn handle_backtest(
     rpc_client: &RpcClient,
 ) -> Result<(), CliError> {
     // TODO: Should we pull the current epoch from RPC or make it be a CLI argument?
-    let current_epoch: u16 = 800;
+    let current_epoch: u16 = 840;
     // TODO: Determine how this should be passed. The number of epochs to look back
     let look_back_period = 50;
     // TODO: Determine if this should be an argument

@@ -50,7 +50,7 @@ pub struct RebalancingSimulator {
 
     pub validator_stake_states: HashMap<String, ValidatorStakeState>,
     pub validator_scores: HashMap<String, f64>,
-    pub current_cycle_start: u16,
+    pub current_cycle_end: u16,
     pub total_lamports_staked: u64,
     pub rebalancing_cycles: Vec<RebalancingCycle>,
     pub top_validators: Vec<ValidatorWithScore>,
@@ -105,7 +105,8 @@ impl RebalancingSimulator {
         )
         .await?;
 
-        let epoch_map = Self::build_epoch_map(withdraws_and_deposits_stakes, active_stake);
+        let manual_withdraw_deposit_stake_epoch_map =
+            Self::build_epoch_map(withdraws_and_deposits_stakes, active_stake);
         let entries_by_validator = Self::build_entries_by_validator(all_entries);
 
         info!(
@@ -127,14 +128,16 @@ impl RebalancingSimulator {
             instant_unstake_cap_bps,
             validator_stake_states: HashMap::new(),
             validator_scores: HashMap::new(),
-            current_cycle_start: simulation_start_epoch,
+            current_cycle_end: simulation_start_epoch
+                .checked_add(steward_cycle_rate)
+                .unwrap(),
             total_lamports_staked,
             rebalancing_cycles: Vec::new(),
             top_validators: Vec::new(),
             histories,
             jito_cluster_history,
             entries_by_validator: Arc::new(entries_by_validator),
-            epoch_map,
+            epoch_map: manual_withdraw_deposit_stake_epoch_map,
         })
     }
 
@@ -239,12 +242,14 @@ impl RebalancingSimulator {
         current_epoch: u16,
         cycle_starting_lamports: u64,
     ) -> Result<u64, CliError> {
-        let current_cycle_end = std::cmp::min(
-            self.current_cycle_start + self.steward_cycle_rate,
-            self.simulation_end_epoch,
-        );
+        let next_cycle_end = std::cmp::min(self.current_cycle_end, self.simulation_end_epoch);
 
-        if self.current_cycle_start > self.simulation_start_epoch {
+        if self
+            .current_cycle_end
+            .checked_sub(self.steward_cycle_rate)
+            .unwrap()
+            > self.simulation_start_epoch
+        {
             self.complete_cycle(cycle_starting_lamports);
             self.validator_stake_states.clear();
         }
@@ -255,7 +260,7 @@ impl RebalancingSimulator {
 
         let new_cycle_starting_lamports = self.rebalance_stakes();
 
-        self.current_cycle_start = current_cycle_end;
+        self.current_cycle_end = next_cycle_end;
         Ok(new_cycle_starting_lamports)
     }
 
@@ -816,7 +821,7 @@ impl RebalancingSimulator {
         entries_by_validator
     }
 
-    /// This reutrns the hashap of manual withdraws and deposits of stakes epochwise
+    /// This returns the hashap of manual withdraws and deposits of stakes epochwise
     fn build_epoch_map(
         withdraws_and_deposits: Vec<WithdrawsAndDeposits>,
         active_stake: Vec<ActiveStakeJitoSol>,
