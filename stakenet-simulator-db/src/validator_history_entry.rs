@@ -193,11 +193,15 @@ impl ValidatorHistoryEntry {
             separated.push_bind(BigDecimal::from(
                 record.validator_history_entry.block_data_updated_at_slot,
             ));
-            separated.push_bind(i16::from(
-                record
-                    .validator_history_entry
-                    .priority_fee_merkle_root_upload_authority as u8,
-            ));
+            let mut value = record
+                .validator_history_entry
+                .priority_fee_merkle_root_upload_authority as u8;
+
+            if value == 4 {
+                value = 255;
+            }
+
+            separated.push_bind(i16::from(value));
 
             separated.push_unseparated(") ");
 

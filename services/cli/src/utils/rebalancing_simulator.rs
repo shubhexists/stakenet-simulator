@@ -119,6 +119,15 @@ impl RebalancingSimulator {
             .checked_mul(number_of_validator_delegations as u64)
             .ok_or(CliError::ArithmeticError)?;
 
+        // Initialize validator stake states for all validators from the start
+        let mut validator_stake_states = HashMap::new();
+        for validator_history in &histories {
+            validator_stake_states.insert(
+                validator_history.vote_account.clone(),
+                ValidatorStakeState::default(),
+            );
+        }
+
         Ok(Self {
             steward_config,
             simulation_start_epoch,
@@ -126,7 +135,7 @@ impl RebalancingSimulator {
             steward_cycle_rate,
             number_of_validator_delegations,
             instant_unstake_cap_bps,
-            validator_stake_states: HashMap::new(),
+            validator_stake_states,
             validator_scores: HashMap::new(),
             current_cycle_end: simulation_start_epoch
                 .checked_add(steward_cycle_rate)
@@ -187,18 +196,8 @@ impl RebalancingSimulator {
     }
 
     fn process_epoch_transitions(&mut self) {
-        let mut validators_to_completely_remove = Vec::new();
-
-        for (vote_account, stake_state) in self.validator_stake_states.iter_mut() {
+        for stake_state in self.validator_stake_states.values_mut() {
             stake_state.process_epoch_transition();
-
-            if stake_state.total() == 0 {
-                validators_to_completely_remove.push(vote_account.clone());
-            }
-        }
-
-        for vote_account in validators_to_completely_remove {
-            self.validator_stake_states.remove(&vote_account);
         }
     }
 
@@ -242,16 +241,16 @@ impl RebalancingSimulator {
         current_epoch: u16,
         cycle_starting_lamports: u64,
     ) -> Result<u64, CliError> {
-        let next_cycle_end = std::cmp::min(self.current_cycle_end, self.simulation_end_epoch);
+        info!(
+            "Starting steward cycle at epoch {} (cycle {} of estimated {})",
+            current_epoch,
+            self.rebalancing_cycles.len() + 1,
+            (self.simulation_end_epoch - self.simulation_start_epoch) / self.steward_cycle_rate
+        );
 
-        if self
-            .current_cycle_end
-            .checked_sub(self.steward_cycle_rate)
-            .unwrap()
-            > self.simulation_start_epoch
-        {
+        // Complete the previous cycle if this isn't the very first rebalancing epoch
+        if !self.rebalancing_cycles.is_empty() || cycle_starting_lamports > 0 {
             self.complete_cycle(cycle_starting_lamports);
-            self.validator_stake_states.clear();
         }
 
         self.top_validators = self
@@ -260,7 +259,13 @@ impl RebalancingSimulator {
 
         let new_cycle_starting_lamports = self.rebalance_stakes();
 
-        self.current_cycle_end = next_cycle_end;
+        self.current_cycle_end = std::cmp::min(
+            current_epoch
+                .checked_add(self.steward_cycle_rate)
+                .unwrap_or(self.simulation_end_epoch),
+            self.simulation_end_epoch,
+        );
+
         Ok(new_cycle_starting_lamports)
     }
 
@@ -275,7 +280,7 @@ impl RebalancingSimulator {
         // Factor in deposit/withdraws of the stakes
         self.apply_epoch_stake_changes(current_epoch)?;
 
-        // We won't calculate instant unstakes in the epoch that asteward cycle starts
+        // We won't calculate instant unstakes in the epoch that steward cycle starts
         if !is_rebalancing_epoch {
             self.handle_epoch_instant_unstaking(current_epoch_entries, current_epoch)
                 .await?;
@@ -379,7 +384,7 @@ impl RebalancingSimulator {
             .map(|v| v.vote_account.clone())
             .collect();
 
-        self.remove_validators_not_in_set(&new_validator_set);
+        self.set_validator_targets(&new_validator_set);
 
         let target_total = if current_total_stake > 0 {
             current_total_stake
@@ -392,28 +397,23 @@ impl RebalancingSimulator {
         target_total
     }
 
-    fn remove_validators_not_in_set(&mut self, new_validator_set: &HashSet<String>) {
-        let validators_to_remove: Vec<String> = self
-            .validator_stake_states
-            .keys()
-            .filter(|vote_account| !new_validator_set.contains(*vote_account))
-            .cloned()
-            .collect();
-
-        for vote_account in validators_to_remove {
-            if let Some(mut stake_state) = self.validator_stake_states.remove(&vote_account) {
+    /// Set target to 0 for validators not in the new set
+    fn set_validator_targets(&mut self, new_validator_set: &HashSet<String>) {
+        for (vote_account, stake_state) in self.validator_stake_states.iter_mut() {
+            if new_validator_set.contains(vote_account) {
+                // target for selected validators will be set in redistribute_stakes hence I didn't add here
+                continue;
+            } else {
+                // Set target to 0 for non-selected validators
+                stake_state.target = 0;
                 let total_stake = stake_state.total();
 
-                if total_stake == 0 {
-                    // If no stake, don't re-insert at all
-                    continue;
+                if total_stake > 0 {
+                    // Deactivate all stake
+                    stake_state.deactivating = total_stake;
+                    stake_state.active = 0;
+                    stake_state.activating = 0;
                 }
-
-                stake_state.deactivating = total_stake;
-                stake_state.active = 0;
-                stake_state.activating = 0;
-                self.validator_stake_states
-                    .insert(vote_account, stake_state);
             }
         }
     }
@@ -430,8 +430,11 @@ impl RebalancingSimulator {
 
             let current_state = self
                 .validator_stake_states
-                .entry(validator.vote_account.clone())
-                .or_insert_with(ValidatorStakeState::default);
+                .get_mut(&validator.vote_account)
+                .expect("Validator should exist in stake states");
+
+            // Set target for this validator
+            current_state.target = stake_per_validator;
 
             let current_total = current_state.total();
 
@@ -469,6 +472,7 @@ impl RebalancingSimulator {
     }
 
     /// This functions takes random validators to factor in manual withdraw and deposit of stakes
+    /// The validators that are distributed are only from the top_validators array
     fn apply_epoch_stake_changes(&mut self, current_epoch: u16) -> Result<(), CliError> {
         let current_epoch_u64 = current_epoch as u64;
 
@@ -478,27 +482,37 @@ impl RebalancingSimulator {
                 return Ok(());
             }
 
-            let validator_accounts: Vec<String> =
-                self.validator_stake_states.keys().cloned().collect();
-            if validator_accounts.is_empty() {
+            // Only select from top_validators for manual withdraw/deposit stake operations
+            // also filter the ones that have a target 0
+            let top_validator_accounts: Vec<String> = self
+                .top_validators
+                .iter()
+                .filter(|v| {
+                    self.validator_stake_states.contains_key(&v.vote_account)
+                        && self.validator_stake_states[&v.vote_account].target != 0
+                })
+                .map(|v| v.vote_account.clone())
+                .collect();
+
+            if top_validator_accounts.is_empty() {
                 return Ok(());
             }
 
             let mut rng = rng();
             let selected_validators: Vec<String> = (0..num_records)
                 .map(|_| {
-                    validator_accounts
+                    top_validator_accounts
                         .choose(&mut rng)
-                        .unwrap_or(&validator_accounts[0])
+                        .unwrap_or(&top_validator_accounts[0])
                         .clone()
                 })
                 .collect();
 
             info!(
-                "Epoch {}: Applying stake changes to {} randomly selected validators from {} total validators",
+                "Epoch {}: Applying stake changes to {} randomly selected validators from {} top validators",
                 current_epoch,
                 num_records,
-                validator_accounts.len()
+                top_validator_accounts.len()
             );
 
             for (validator_account, epoch_data) in
@@ -681,6 +695,8 @@ impl RebalancingSimulator {
                 stake_state.add_deactivating_stake(stake_state.active)?;
                 stake_state.deactivating += stake_state.activating;
                 stake_state.activating = 0;
+                // Set target to 0 for instantly unstaked validators
+                stake_state.target = 0;
 
                 info!(
                     "Instant unstaking: moved {:.3} SOL to deactivating for validator {}",
@@ -720,6 +736,8 @@ impl RebalancingSimulator {
                     self.validator_stake_states.get_mut(&validator.vote_account)
                 {
                     stake_state.add_activating_stake(stake_per_remaining_validator);
+                    // Update target to reflect the additional stake
+                    stake_state.target += stake_per_remaining_validator;
                 }
             }
 
@@ -791,20 +809,15 @@ impl RebalancingSimulator {
 
     /// Pushes the final rebalancing cycle
     fn finalize_simulation(&mut self, cycle_starting_lamports: u64) {
-        if !self.validator_stake_states.is_empty() {
-            let final_cycle_ending_lamports = self
-                .validator_stake_states
-                .values()
-                .map(|state| state.total())
-                .sum::<u64>();
-
-            let final_cycle_result = RebalancingCycle {
-                starting_total_lamports: cycle_starting_lamports,
-                ending_total_lamports: final_cycle_ending_lamports,
-            };
-
-            self.rebalancing_cycles.push(final_cycle_result);
+        // Always complete the final cycle if we have validator states
+        if !self.validator_stake_states.is_empty() && cycle_starting_lamports > 0 {
+            self.complete_cycle(cycle_starting_lamports);
         }
+
+        info!(
+            "Simulation completed with {} rebalancing cycles",
+            self.rebalancing_cycles.len()
+        );
     }
 
     /// This returns a hashmap of validator votekey to it's entries in the db
