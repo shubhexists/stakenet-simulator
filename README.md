@@ -166,7 +166,7 @@ Follow the following steps to setup the local database initally -
 ```
 supabase start
 ```
-2) Temporarily download inflation data from [Google Sheets](https://docs.google.com/spreadsheets/d/1NNZKSjQDkIK4U8povotsUMEUJOuWzGXKzZDPohkWE0M) as `csv` and store it in the root dir as `data.csv`.
+2) Temporarily download inflation data from [Google Sheets](https://docs.google.com/spreadsheets/d/1NNZKSjQDkIK4U8povotsUMEUJOuWzGXKzZDPohkWE0M) or later complete data as `csv` and store it in the root dir as `data.csv`.
 3) Build the cargo project and run the following commands to populate the table - 
 ```bash
 export RPC_URL={YOUR_RPC_URL}
@@ -189,3 +189,6 @@ export DUNE_API_KEY={YOUR_DUNE_API_KEY}
 
 ./target/release/epoch-rewards-tracker get-inflation-rewards
 ```
+
+## Additional Information 
+We have intentionally converted `priority_fee_merkle_root_upload_authority` all DNE to Unset for calculation purposes. Should be removed when the issue is solved.
