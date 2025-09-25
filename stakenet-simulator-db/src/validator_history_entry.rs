@@ -1,3 +1,4 @@
+use crate::{big_decimal_u64::BigDecimalU64, decode_db, error::StakenetSimulatorDbError};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     Error, FromRow, Pool, Postgres, QueryBuilder, Row,
@@ -7,8 +8,6 @@ use sqlx::{
 use validator_history::{
     ClientVersion as JitoClientVersion, ValidatorHistoryEntry as JitoValidatorHistoryEntry,
 };
-
-use crate::{big_decimal_u64::BigDecimalU64, decode_db, error::StakenetSimulatorDbError};
 
 #[derive(Clone)]
 pub struct ValidatorHistoryEntry {
@@ -193,6 +192,10 @@ impl ValidatorHistoryEntry {
             separated.push_bind(BigDecimal::from(
                 record.validator_history_entry.block_data_updated_at_slot,
             ));
+
+            // TODO: The simulator is looking at historical data that has already been set to DNE. Hence,
+            // for now to prevent a lot of DNE's we currently modify the data to change all the DNE's to UNSET
+            // To be reverted when this issue is fixed
             let mut value = record
                 .validator_history_entry
                 .priority_fee_merkle_root_upload_authority as u8;

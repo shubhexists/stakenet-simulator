@@ -55,6 +55,7 @@ pub struct RebalancingSimulator {
     pub rebalancing_cycles: Vec<RebalancingCycle>,
     pub top_validators: Vec<ValidatorWithScore>,
 
+    pub pending_deactivation: u64,
     pub histories: Vec<ValidatorHistory>,
     pub jito_cluster_history: Arc<JitoClusterHistory>,
     pub entries_by_validator: Arc<HashMap<String, Vec<ValidatorHistoryEntry>>>,
@@ -143,6 +144,7 @@ impl RebalancingSimulator {
             total_lamports_staked,
             rebalancing_cycles: Vec::new(),
             top_validators: Vec::new(),
+            pending_deactivation: 0,
             histories,
             jito_cluster_history,
             entries_by_validator: Arc::new(entries_by_validator),
@@ -280,6 +282,10 @@ impl RebalancingSimulator {
         // Factor in deposit/withdraws of the stakes
         self.apply_epoch_stake_changes(current_epoch)?;
 
+        if !self.top_validators.is_empty() && !is_rebalancing_epoch {
+            self.check_previous_cycle_stake();
+        }
+
         // We won't calculate instant unstakes in the epoch that steward cycle starts
         if !is_rebalancing_epoch {
             self.handle_epoch_instant_unstaking(current_epoch_entries, current_epoch)
@@ -397,77 +403,235 @@ impl RebalancingSimulator {
         target_total
     }
 
-    /// Set target to 0 for validators not in the new set
-    fn set_validator_targets(&mut self, new_validator_set: &HashSet<String>) {
-        for (vote_account, stake_state) in self.validator_stake_states.iter_mut() {
-            if new_validator_set.contains(vote_account) {
-                // target for selected validators will be set in redistribute_stakes hence I didn't add here
-                continue;
-            } else {
-                // Set target to 0 for non-selected validators
-                stake_state.target = 0;
-                let total_stake = stake_state.total();
+    /// This function checks if there is still stake present in the previous validators that we should allocate to
+    /// if yes, then we deactivate the previous amount by `self.instant_unstake_cap_bps` and then distribute it to the
+    /// highest score validator that has not reached the `desired_target`
+    fn check_previous_cycle_stake(&mut self) {
+        let new_validator_set: HashSet<String> = self
+            .top_validators
+            .iter()
+            .map(|v| v.vote_account.clone())
+            .collect();
 
-                if total_stake > 0 {
-                    // Deactivate all stake
-                    stake_state.deactivating = total_stake;
-                    stake_state.active = 0;
-                    stake_state.activating = 0;
-                }
+        // Check if there are still old validators with stake
+        let has_old_validators_with_stake =
+            self.validator_stake_states
+                .iter()
+                .any(|(vote_account, stake_state)| {
+                    !new_validator_set.contains(vote_account) && stake_state.total() > 0
+                });
+
+        if has_old_validators_with_stake {
+            info!("Continuing gradual migration of remaining old validator stakes");
+
+            // Continue deactivating from old validators
+            self.set_validator_targets(&new_validator_set);
+
+            // Redistribute to new validators
+            let target_total = self.total_lamports_staked;
+            self.redistribute_stakes(target_total);
+        }
+    }
+
+    fn set_validator_targets(&mut self, new_validator_set: &HashSet<String>) {
+        let max_deactivation_amount =
+            (self.total_lamports_staked as u128 * self.instant_unstake_cap_bps as u128 / 10000)
+                .min(u64::MAX as u128) as u64;
+
+        let mut validators_to_deactivate: Vec<(String, f64, u64)> = Vec::new();
+
+        for (vote_account, stake_state) in self.validator_stake_states.iter() {
+            if !new_validator_set.contains(vote_account) && stake_state.total() > 0 {
+                let score = self
+                    .validator_scores
+                    .get(vote_account)
+                    .copied()
+                    .unwrap_or(0.0);
+                validators_to_deactivate.push((vote_account.clone(), score, stake_state.total()));
             }
         }
+
+        validators_to_deactivate
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut total_deactivated = 0u64;
+        let mut actual_deactivated_stake = 0u64;
+
+        for (vote_account, _score, total_stake) in validators_to_deactivate {
+            if total_deactivated + total_stake <= max_deactivation_amount {
+                if let Some(stake_state) = self.validator_stake_states.get_mut(&vote_account) {
+                    stake_state.target = 0;
+                    let active_to_deactivate = stake_state.active;
+                    let activating_to_deactivate = stake_state.activating;
+
+                    stake_state.deactivating += active_to_deactivate + activating_to_deactivate;
+                    stake_state.active = 0;
+                    stake_state.activating = 0;
+
+                    actual_deactivated_stake += active_to_deactivate + activating_to_deactivate;
+
+                    info!(
+                        "Deactivating entire validator {} ({:.3} SOL) - Score: {:.4}",
+                        vote_account,
+                        total_stake as f64 / LAMPORTS_PER_SOL as f64,
+                        _score
+                    );
+                }
+                total_deactivated += total_stake;
+            } else if total_deactivated < max_deactivation_amount {
+                let remaining_capacity = max_deactivation_amount - total_deactivated;
+                if let Some(stake_state) = self.validator_stake_states.get_mut(&vote_account) {
+                    let mut amount_to_deactivate = remaining_capacity;
+
+                    let activating_deactivation =
+                        std::cmp::min(amount_to_deactivate, stake_state.activating);
+                    stake_state.activating -= activating_deactivation;
+                    stake_state.deactivating += activating_deactivation;
+                    amount_to_deactivate -= activating_deactivation;
+
+                    if amount_to_deactivate > 0 && stake_state.active > 0 {
+                        let active_deactivation =
+                            std::cmp::min(amount_to_deactivate, stake_state.active);
+                        stake_state.active -= active_deactivation;
+                        stake_state.deactivating += active_deactivation;
+                        amount_to_deactivate -= active_deactivation;
+                    }
+
+                    let total_deactivated_this_validator =
+                        remaining_capacity - amount_to_deactivate;
+                    actual_deactivated_stake += total_deactivated_this_validator;
+
+                    let remaining_stake = stake_state.total();
+                    stake_state.target = remaining_stake;
+
+                    info!(
+                        "Partially deactivating validator {} ({:.3} SOL of {:.3} SOL) - Score: {:.4}",
+                        vote_account,
+                        total_deactivated_this_validator as f64 / LAMPORTS_PER_SOL as f64,
+                        total_stake as f64 / LAMPORTS_PER_SOL as f64,
+                        _score
+                    );
+                }
+                // We've hit the cap
+                break;
+            } else {
+                // Already at cap
+                break;
+            }
+        }
+
+        self.pending_deactivation = actual_deactivated_stake;
+
+        info!(
+            "Gradual migration: Deactivated {:.3} SOL ({:.2}% of total) from lowest-scored validators",
+            actual_deactivated_stake as f64 / LAMPORTS_PER_SOL as f64,
+            (actual_deactivated_stake as f64 / self.total_lamports_staked as f64) * 100.0
+        );
     }
 
     /// This function checks if the current total of the activating stake is greater than the target
     /// if greater, unstakes the differerence, puts that in deactivating and vice versa
+    /// The amount that is distributed is the amount that has been unstaked from past validators i.e. self.pending_deactivation
+    /// Validators in top_validators that have higher score have higher priority of getting the stake first
     fn redistribute_stakes(&mut self, target_total: u64) {
-        let stake_per_validator: u64 = target_total / self.top_validators.len() as u64;
+        let mut sorted_validators = self.top_validators.clone();
+        sorted_validators.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let stake_per_validator: u64 = target_total / sorted_validators.len() as u64;
 
         self.validator_scores.clear();
-        for validator in &self.top_validators {
+        for validator in &sorted_validators {
             self.validator_scores
                 .insert(validator.vote_account.clone(), validator.score);
 
-            let current_state = self
-                .validator_stake_states
-                .get_mut(&validator.vote_account)
-                .expect("Validator should exist in stake states");
-
-            // Set target for this validator
-            current_state.target = stake_per_validator;
-
-            let current_total = current_state.total();
-
-            if current_total < stake_per_validator {
-                let deficit = stake_per_validator - current_total;
-                current_state.add_activating_stake(deficit);
-                info!(
-                    "Adding {:.3} SOL activating stake to validator {} (current: {:.3} SOL, target: {:.3} SOL)",
-                    deficit as f64 / LAMPORTS_PER_SOL as f64,
-                    validator.vote_account,
-                    current_total as f64 / LAMPORTS_PER_SOL as f64,
-                    stake_per_validator as f64 / LAMPORTS_PER_SOL as f64
-                );
-            } else if current_total > stake_per_validator {
-                let excess = current_total - stake_per_validator;
-                if let Err(e) = current_state.add_deactivating_stake(excess) {
-                    error!("Failed to add deactivating stake: {:?}", e);
-                }
-                info!(
-                    "Deactivating {:.3} SOL from validator {} (current: {:.3} SOL, target: {:.3} SOL)",
-                    excess as f64 / LAMPORTS_PER_SOL as f64,
-                    validator.vote_account,
-                    current_total as f64 / LAMPORTS_PER_SOL as f64,
-                    stake_per_validator as f64 / LAMPORTS_PER_SOL as f64
-                );
+            if let Some(stake_state) = self.validator_stake_states.get_mut(&validator.vote_account)
+            {
+                stake_state.desired_target = stake_per_validator;
             }
         }
 
+        let total_existing_stake: u64 = self
+            .validator_stake_states
+            .values()
+            .map(|state| state.total())
+            .sum();
+
+        let available_for_redistribution = if total_existing_stake == 0 {
+            info!(
+                "Initial stake allocation: distributing {:.3} SOL",
+                target_total as f64 / LAMPORTS_PER_SOL as f64
+            );
+            target_total
+        } else {
+            // Ongoing migration: use pending deactivation
+            self.pending_deactivation
+        };
+
+        if available_for_redistribution == 0 {
+            info!("No stake available for redistribution in this cycle");
+            return;
+        }
+
+        // Distribute available stake prioritizing high-scored validators to reach their desired_target first
+        let mut remaining_stake = available_for_redistribution;
+
+        for validator in &sorted_validators {
+            if remaining_stake == 0 {
+                break;
+            }
+
+            let current_state = self
+                .validator_stake_states
+                .get(&validator.vote_account)
+                .expect("Validator should exist in stake states");
+
+            let current_total = current_state.total();
+            let desired_target = current_state.desired_target;
+
+            let needed_stake = if desired_target > current_total {
+                desired_target - current_total
+            } else {
+                0
+            };
+
+            let allocation = std::cmp::min(needed_stake, remaining_stake);
+            if allocation > 0 {
+                if let Some(stake_state) =
+                    self.validator_stake_states.get_mut(&validator.vote_account)
+                {
+                    stake_state.target = current_total + allocation;
+                    stake_state.add_activating_stake(allocation);
+                    remaining_stake -= allocation;
+
+                    info!(
+                        "Allocating {:.3} SOL to validator {} (Score: {:.4}) - Progress: {:.1}% of desired target",
+                        allocation as f64 / LAMPORTS_PER_SOL as f64,
+                        validator.vote_account,
+                        validator.score,
+                        ((current_total + allocation) as f64 / desired_target as f64) * 100.0
+                    );
+                }
+            } else {
+                // Validator already at or above desired target
+                if let Some(stake_state) =
+                    self.validator_stake_states.get_mut(&validator.vote_account)
+                {
+                    stake_state.target = current_total;
+                }
+            }
+        }
+
+        self.pending_deactivation = 0;
+
         info!(
-            "Rebalanced to {} validators with target {:.3} SOL each, total: {:.3} SOL",
-            self.top_validators.len(),
+            "Redistributed {:.3} SOL to validators (target: {:.3} SOL each, remaining unfulfilled: {:.3} SOL)",
+            (available_for_redistribution - remaining_stake) as f64 / LAMPORTS_PER_SOL as f64,
             stake_per_validator as f64 / LAMPORTS_PER_SOL as f64,
-            target_total as f64 / LAMPORTS_PER_SOL as f64
+            remaining_stake as f64 / LAMPORTS_PER_SOL as f64
         );
     }
 
