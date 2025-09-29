@@ -47,6 +47,7 @@ pub struct RebalancingSimulator {
     pub steward_cycle_rate: u16,
     pub number_of_validator_delegations: usize,
     pub instant_unstake_cap_bps: u32,
+    pub scoring_unstake_cap_bps: u32,
 
     pub validator_stake_states: HashMap<String, ValidatorStakeState>,
     pub validator_scores: HashMap<String, f64>,
@@ -72,6 +73,7 @@ impl RebalancingSimulator {
         steward_cycle_rate: u16,
         number_of_validator_delegations: usize,
         instant_unstake_cap_bps: u32,
+        scoring_unstake_cap_bps: u32,
         validator_historical_start_offset: u16,
     ) -> Result<Self, CliError> {
         info!("Initializing rebalancing simulator...");
@@ -136,6 +138,7 @@ impl RebalancingSimulator {
             steward_cycle_rate,
             number_of_validator_delegations,
             instant_unstake_cap_bps,
+            scoring_unstake_cap_bps,
             validator_stake_states,
             validator_scores: HashMap::new(),
             current_cycle_end: simulation_start_epoch
@@ -435,7 +438,7 @@ impl RebalancingSimulator {
 
     fn set_validator_targets(&mut self, new_validator_set: &HashSet<String>) {
         let max_deactivation_amount =
-            (self.total_lamports_staked as u128 * self.instant_unstake_cap_bps as u128 / 10000)
+            (self.total_lamports_staked as u128 * self.scoring_unstake_cap_bps as u128 / 10000)
                 .min(u64::MAX as u128) as u64;
 
         let mut validators_to_deactivate: Vec<(String, f64, u64)> = Vec::new();
