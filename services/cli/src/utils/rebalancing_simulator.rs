@@ -167,7 +167,7 @@ impl RebalancingSimulator {
 
             // for all validators, put all the activating sol in the previous epoch as active and remove all the
             // deactivating sol
-            self.process_epoch_transitions();
+            self.transition_validator_stake_stake();
 
             let is_rebalancing_epoch = self.is_rebalancing_epoch(current_epoch);
             // filter the validator entries to get only the entries that are before the current epoch
@@ -200,7 +200,9 @@ impl RebalancingSimulator {
         Ok(self.rebalancing_cycles.clone())
     }
 
-    fn process_epoch_transitions(&mut self) {
+    /// Transitions each validator's stake state. Activating stake becomes active, deactivating is
+    /// removed. 
+    fn transition_validator_stake_stake(&mut self) {
         for stake_state in self.validator_stake_states.values_mut() {
             stake_state.process_epoch_transition();
         }
@@ -393,7 +395,7 @@ impl RebalancingSimulator {
             .map(|v| v.vote_account.clone())
             .collect();
 
-        self.set_validator_targets(&new_validator_set);
+        self.adjust_validator_targets_for_scoring_change(&new_validator_set);
 
         let target_total = if current_total_stake > 0 {
             current_total_stake
@@ -406,9 +408,10 @@ impl RebalancingSimulator {
         target_total
     }
 
-    /// This function checks if there is still stake present in the previous validators that we should allocate to
-    /// if yes, then we deactivate the previous amount by `self.instant_unstake_cap_bps` and then distribute it to the
-    /// highest score validator that has not reached the `desired_target`
+    /// This function checks if there is still stake present in validators from the previous set 
+    /// that must still be deactivated.
+    /// if yes, then we deactivate the previous amount by `self.scoring_unstake_cap_bps` and then 
+    /// distribute it to the highest score validator that has not reached the `desired_target`
     fn check_previous_cycle_stake(&mut self) {
         let new_validator_set: HashSet<String> = self
             .top_validators
@@ -428,7 +431,7 @@ impl RebalancingSimulator {
             info!("Continuing gradual migration of remaining old validator stakes");
 
             // Continue deactivating from old validators
-            self.set_validator_targets(&new_validator_set);
+            self.adjust_validator_targets_for_scoring_change(&new_validator_set);
 
             // Redistribute to new validators
             let target_total = self.total_lamports_staked;
@@ -436,7 +439,8 @@ impl RebalancingSimulator {
         }
     }
 
-    fn set_validator_targets(&mut self, new_validator_set: &HashSet<String>) {
+    /// Adjusts the validator targets based on a new set of validators.
+    fn adjust_validator_targets_for_scoring_change(&mut self, new_validator_set: &HashSet<String>) {
         let max_deactivation_amount =
             (self.total_lamports_staked as u128 * self.scoring_unstake_cap_bps as u128 / 10000)
                 .min(u64::MAX as u128) as u64;
@@ -461,6 +465,7 @@ impl RebalancingSimulator {
         let mut actual_deactivated_stake = 0u64;
 
         for (vote_account, _score, total_stake) in validators_to_deactivate {
+            // If we don't exceed the deactivation cap, then deactivate all
             if total_deactivated + total_stake <= max_deactivation_amount {
                 if let Some(stake_state) = self.validator_stake_states.get_mut(&vote_account) {
                     stake_state.target = 0;
@@ -482,6 +487,7 @@ impl RebalancingSimulator {
                 }
                 total_deactivated += total_stake;
             } else if total_deactivated < max_deactivation_amount {
+                // Handle partial deactivation 
                 let remaining_capacity = max_deactivation_amount - total_deactivated;
                 if let Some(stake_state) = self.validator_stake_states.get_mut(&vote_account) {
                     let mut amount_to_deactivate = remaining_capacity;
