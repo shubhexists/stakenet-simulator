@@ -179,7 +179,9 @@ export DUNE_API_KEY={YOUR_DUNE_API_KEY}
 
 ./target/release/epoch-rewards-tracker fetch-inactive-stake
 
-./target/release/epoch-rewards-tracker withdraw-and-deposits
+./target/release/epoch-rewards-tracker withdraw-and-deposit-stake
+
+./target/release/epoch-rewards-tracker withdraw-and-deposit-sol
 
 ./target/release/epoch-rewards-tracker fetch-cluster-history
 

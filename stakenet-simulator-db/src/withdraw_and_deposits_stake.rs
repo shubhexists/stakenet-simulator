@@ -2,7 +2,7 @@ use crate::big_decimal_u64::BigDecimalU64;
 use sqlx::{Error, FromRow, Pool, Postgres, QueryBuilder, types::BigDecimal};
 
 #[derive(FromRow, Debug)]
-pub struct WithdrawsAndDeposits {
+pub struct WithdrawsAndDepositStakes {
     pub id: String, // {epoch}-{vote_pubkey}
     #[sqlx(try_from = "BigDecimalU64")]
     pub epoch: u64,
@@ -11,7 +11,7 @@ pub struct WithdrawsAndDeposits {
     pub deposit_stake: BigDecimal,
 }
 
-impl WithdrawsAndDeposits {
+impl WithdrawsAndDepositStakes {
     const NUM_FIELDS: u8 = 5;
     const INSERT_CHUNK_SIZE: usize = 65534 / Self::NUM_FIELDS as usize;
     const INSERT_QUERY: &str = "INSERT INTO withdraw_and_deposit_stakes \

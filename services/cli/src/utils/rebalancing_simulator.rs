@@ -14,7 +14,7 @@ use stakenet_simulator_db::{
     active_stake_jito_sol::ActiveStakeJitoSol, cluster_history::ClusterHistory,
     cluster_history_entry::ClusterHistoryEntry, epoch_rewards::EpochRewards,
     validator_history::ValidatorHistory, validator_history_entry::ValidatorHistoryEntry,
-    withdraw_and_deposits::WithdrawsAndDeposits,
+    withdraw_and_deposits_stake::WithdrawsAndDepositStakes,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -94,7 +94,7 @@ impl RebalancingSimulator {
         )
         .await?;
 
-        let withdraws_and_deposits_stakes = WithdrawsAndDeposits::get_details_for_epoch_range(
+        let withdraws_and_deposits_stakes = WithdrawsAndDepositStakes::get_details_for_epoch_range(
             db_connection,
             simulation_start_epoch.into(),
             simulation_end_epoch.into(),
@@ -1009,7 +1009,7 @@ impl RebalancingSimulator {
 
     /// This returns the hashap of manual withdraws and deposits of stakes epochwise
     fn build_epoch_map(
-        withdraws_and_deposits: Vec<WithdrawsAndDeposits>,
+        withdraws_and_deposits: Vec<WithdrawsAndDepositStakes>,
         active_stake: Vec<ActiveStakeJitoSol>,
     ) -> HashMap<u64, Vec<EpochWithdrawDepositStakeData>> {
         let mut epoch_map: HashMap<u64, Vec<EpochWithdrawDepositStakeData>> = HashMap::new();
