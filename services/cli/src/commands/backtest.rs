@@ -123,6 +123,7 @@ pub async fn handle_backtest(
         args.steward_cycle_rate,
         number_of_validator_delegations,
         steward_config.parameters.instant_unstake_cap_bps,
+        steward_config.parameters.scoring_unstake_cap_bps,
         std::cmp::max(
             steward_config.parameters.mev_commission_range,
             std::cmp::max(
@@ -156,6 +157,7 @@ pub async fn rebalancing_simulation(
     steward_cycle_rate: u16,
     number_of_validator_delegations: usize,
     instant_unstake_cap_bps: u32,
+    scoring_unstake_cap_bps: u32,
     validator_historical_start_offset: u16,
 ) -> Result<Vec<RebalancingCycle>, CliError> {
     let mut simulator = RebalancingSimulator::new(
@@ -166,6 +168,7 @@ pub async fn rebalancing_simulation(
         steward_cycle_rate,
         number_of_validator_delegations,
         instant_unstake_cap_bps,
+        scoring_unstake_cap_bps,
         validator_historical_start_offset,
     )
     .await?;
