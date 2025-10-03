@@ -411,7 +411,7 @@ impl RebalancingSimulator {
     /// This function checks if there is still stake present in validators from the previous set 
     /// that must still be deactivated.
     /// if yes, then we deactivate the previous amount by `self.scoring_unstake_cap_bps` and then 
-    /// distribute it to the highest score validator that has not reached the `desired_target`
+    /// distribute it to the highest score validator that has not reached the `target`
     fn check_previous_cycle_stake(&mut self) {
         let new_validator_set: HashSet<String> = self
             .top_validators
@@ -584,8 +584,8 @@ impl RebalancingSimulator {
             info!("No stake available for redistribution in this cycle");
             return;
         }
-
-        // Distribute available stake prioritizing high-scored validators to reach their `target` first
+ 
+        // Distribute available stake prioritizing high-scored validators to reach their target first
         let mut remaining_stake = available_for_redistribution;
 
         for validator in &sorted_validators {
