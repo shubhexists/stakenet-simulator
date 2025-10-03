@@ -559,7 +559,7 @@ impl RebalancingSimulator {
 
             if let Some(stake_state) = self.validator_stake_states.get_mut(&validator.vote_account)
             {
-                stake_state.desired_target = stake_per_validator;
+                stake_state.target = stake_per_validator;
             }
         }
 
@@ -599,7 +599,7 @@ impl RebalancingSimulator {
                 .expect("Validator should exist in stake states");
 
             let current_total = current_state.total();
-            let desired_target = current_state.desired_target;
+            let desired_target = current_state.target;
 
             let needed_stake = if desired_target > current_total {
                 desired_target - current_total
