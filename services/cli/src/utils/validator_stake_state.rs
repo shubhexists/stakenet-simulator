@@ -6,7 +6,6 @@ pub struct ValidatorStakeState {
     pub activating: u64,
     pub deactivating: u64,
     pub target: u64,
-    pub desired_target: u64,
 }
 
 impl ValidatorStakeState {
