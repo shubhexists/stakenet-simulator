@@ -193,4 +193,5 @@ export DUNE_API_KEY={YOUR_DUNE_API_KEY}
 ```
 
 ## Additional Information 
-We have intentionally converted `priority_fee_merkle_root_upload_authority` all DNE to Unset for calculation purposes. Should be removed when the issue is solved.
+- We have intentionally converted `priority_fee_merkle_root_upload_authority` all DNE to Unset for calculation purposes. Should be removed when the issue is solved.
+- To factor in manual SOL deposits and withdraws, we are equally distributing the net of that epoch to all the validators, irrespective of their stake. 
