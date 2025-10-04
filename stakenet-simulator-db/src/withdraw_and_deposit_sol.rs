@@ -64,4 +64,23 @@ impl WithdrawAndDepositSol {
         }
         Ok(())
     }
+
+    pub async fn get_details_for_epoch_range(
+        db_connection: &Pool<Postgres>,
+        start_epoch: i64,
+        end_epoch: i64,
+    ) -> Result<Vec<Self>, Error> {
+        let query = r#"
+            SELECT epoch, withdraw_sol, deposit_sol
+            FROM withdraw_and_deposit_sol
+            WHERE epoch BETWEEN $1 AND $2
+            ORDER BY epoch
+        "#;
+
+        sqlx::query_as::<_, Self>(query)
+            .bind(start_epoch)
+            .bind(end_epoch)
+            .fetch_all(db_connection)
+            .await
+    }
 }
